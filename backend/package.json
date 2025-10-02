@@ -1,0 +1,30 @@
+{
+  "name": "restaurant-guide-backend",
+  "version": "1.0.0",
+  "description": "Backend for Restaurant Guide Belarus v2.0 (Node.js + Express)",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "test": "echo \"No tests specified yet\" && exit 0",
+    "migrate": "node src/utils/migrate.js"
+  },
+  "keywords": ["restaurant", "guide", "belarus", "express", "backend"],
+  "author": "falyronencom",
+  "license": "MIT",
+  "dependencies": {
+    "bcrypt": "^5.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "pg": "^8.11.3",
+    "redis": "^4.6.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  }
+}
