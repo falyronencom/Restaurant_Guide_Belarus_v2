@@ -1,0 +1,1862 @@
+openapi: 3.0.3
+info:
+  title: Restaurant Guide Belarus API
+  description: |
+    Comprehensive API specification for Restaurant Guide Belarus mobile and web applications.
+    
+    ## Version History
+    - **v2.0 (2025-09-30)**: Critical architectural improvements based on Ствол coordinator review
+      - Redesigned ranking algorithm with weighted multi-factor system
+      - Enhanced security: IP-based rate limiting, refresh token rotation, explicit password hashing
+      - Mobile optimization: progressive loading support, WebP image format
+    - **v1.0 (2025-09-26)**: Initial specification
+    
+    ## Authentication
+    - JWT access tokens (15 min expiry) + refresh tokens (30 days)
+    - Strict refresh token rotation to prevent token reuse attacks
+    - Role-based access: `user`, `partner`, `admin`
+    - OAuth integration: Google, Yandex
+    - Password hashing: Argon2id (memory=16MB, iterations=3, parallelism=1)
+    
+    ## Key Features
+    - Geospatial search with intelligent multi-factor ranking
+    - Progressive data loading for mobile optimization
+    - Real-time establishment metrics with subscription-based visibility boosts
+    - Comprehensive media management with WebP format support
+    - Role-based moderation workflow
+    - Analytics and metrics tracking
+    
+    ## Rate Limiting
+    - Authenticated users: 100 requests/minute
+    - Unauthenticated users (per IP): 300 requests/hour
+    - Implemented via Redis with automatic expiration
+    
+    ## Mobile Optimization
+    - Minimal request strategy with progressive loading
+    - Image optimization: WebP format with automatic fallback
+    - Three-tier image resolution system
+    - Pagination for large datasets
+    - Offline-friendly data structures
+    
+  version: 2.0.0
+  contact:
+    name: Restaurant Guide Belarus Team
+    email: api@restaurantguide.by
+
+servers:
+  - url: https://api.restaurantguide.by/v1
+    description: Production server
+  - url: https://staging-api.restaurantguide.by/v1
+    description: Staging server
+
+# =================================================================
+# SECURITY SCHEMES
+# =================================================================
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token with 15-minute expiry. Must be refreshed using refresh token.
+        Tokens are validated without database access for performance.
+  
+  # =================================================================
+  # COMMON SCHEMAS
+  # =================================================================
+  schemas:
+    # Common Response Structures
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    
+    PaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+        per_page:
+          type: integer
+        total_pages:
+          type: integer
+        total_count:
+          type: integer
+        has_next:
+          type: boolean
+        has_prev:
+          type: boolean
+    
+    ErrorResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            error_code:
+              type: string
+              description: Machine-readable error code for client-side handling
+            details:
+              type: object
+              description: Additional error context and validation failures
+    
+    # Modified 2025-09-30: Added RateLimitError for improved rate limiting feedback
+    RateLimitError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            details:
+              type: object
+              properties:
+                limit:
+                  type: integer
+                  description: Request limit threshold
+                window:
+                  type: string
+                  description: Time window for the limit (e.g., "1 hour", "1 minute")
+                retry_after:
+                  type: integer
+                  description: Seconds until rate limit resets
+                reset_at:
+                  type: string
+                  format: date-time
+                  description: Timestamp when rate limit resets
+    
+    # =================================================================
+    # USER MANAGEMENT SCHEMAS
+    # =================================================================
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+        role:
+          type: string
+          enum: [user, partner, admin]
+        auth_method:
+          type: string
+          enum: [email, phone, google, yandex]
+        email_verified:
+          type: boolean
+        phone_verified:
+          type: boolean
+        is_active:
+          type: boolean
+        last_login_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    
+    UserRegistration:
+      type: object
+      required: [name]
+      properties:
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        password:
+          type: string
+          minLength: 8
+          description: |
+            Password will be hashed using Argon2id algorithm with parameters:
+            memory=16MB, iterations=3, parallelism=1. Never transmitted or stored in plain text.
+        name:
+          type: string
+          maxLength: 100
+        auth_method:
+          type: string
+          enum: [email, phone, google, yandex]
+    
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        password:
+          type: string
+    
+    # Modified 2025-09-30: Enhanced AuthTokens documentation for token rotation
+    AuthTokens:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT token valid for 15 minutes, used for API authentication
+        refresh_token:
+          type: string
+          description: |
+            Single-use token valid for 30 days. When used to refresh access token,
+            this token is immediately invalidated and a new refresh token is issued.
+            This prevents token reuse attacks.
+        token_type:
+          type: string
+          default: Bearer
+        expires_in:
+          type: integer
+          description: Access token expiry in seconds (900 for 15 minutes)
+        user:
+          $ref: '#/components/schemas/User'
+    
+    # Modified 2025-09-30: Added OAuthUserInfo for explicit OAuth data handling
+    OAuthUserInfo:
+      type: object
+      description: |
+        Minimal user information stored from OAuth providers. Provider access tokens
+        are NEVER stored after initial authentication completes. Only user identity
+        data is persisted.
+      properties:
+        provider:
+          type: string
+          enum: [google, yandex]
+        provider_user_id:
+          type: string
+          description: Unique user identifier from OAuth provider
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+    
+    # =================================================================
+    # ESTABLISHMENT SCHEMAS
+    # =================================================================
+    EstablishmentBase:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        city:
+          type: string
+          enum: [Минск, Гродно, Брест, Гомель, Витебск, Могилев, Бобруйск]
+        address:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        website:
+          type: string
+          format: uri
+        categories:
+          type: array
+          items:
+            type: string
+            enum: [Ресторан, Кофейня, Фаст-фуд, Бар, Кондитерская, Пиццерия, Пекарня, Паб, Столовая, Кальян, Боулинг, Караоке, Бильярд]
+          maxItems: 2
+        cuisines:
+          type: array
+          items:
+            type: string
+            enum: [Народная, Авторская, Азиатская, Американская, Вегетарианская, Японская, Грузинская, Итальянская, Смешанная, Континентальная]
+          maxItems: 3
+        price_range:
+          type: string
+          enum: [$, $$, $$$]
+        working_hours:
+          type: object
+          description: "Structured schedule: {day: {open: 'HH:mm', close: 'HH:mm', closed: boolean}}"
+        special_hours:
+          type: object
+          description: "Special schedules: {breakfast: {start: 'HH:mm', end: 'HH:mm'}, lunch: {...}}"
+        attributes:
+          type: object
+          description: "Key-value pairs for amenities and features"
+        status:
+          type: string
+          enum: [draft, pending, active, suspended, archived]
+        subscription_tier:
+          type: string
+          enum: [free, basic, standard, premium]
+        view_count:
+          type: integer
+        favorite_count:
+          type: integer
+        review_count:
+          type: integer
+        average_rating:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 5
+        distance:
+          type: number
+          format: float
+          description: "Distance from user location in meters (calculated field)"
+        ranking_score:
+          type: number
+          format: float
+          description: |
+            Modified 2025-09-30: Multi-factor weighted ranking score replacing simple additive formula.
+            Calculated as: (Distance_Factor × 0.35) + (Quality_Factor × 0.40) + (Subscription_Factor × 0.25)
+            Range: 0-300 points. Higher scores indicate better relevance for the user's search context.
+        created_at:
+          type: string
+          format: date-time
+    
+    # Modified 2025-09-30: Added progressive loading support with minimal base response
+    EstablishmentMinimal:
+      type: object
+      description: |
+        Lightweight establishment response (~8KB) for initial fast loading.
+        Contains only essential information to display basic card and allow user assessment.
+        Mobile apps should request this first, then progressively load additional data.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        city:
+          type: string
+        address:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        phone:
+          type: string
+        categories:
+          type: array
+          items:
+            type: string
+        cuisines:
+          type: array
+          items:
+            type: string
+        price_range:
+          type: string
+        working_hours_today:
+          type: object
+          description: "Today's schedule only: {open: 'HH:mm', close: 'HH:mm', is_open_now: boolean}"
+        average_rating:
+          type: number
+        review_count:
+          type: integer
+        distance:
+          type: number
+        ranking_score:
+          type: number
+        primary_image:
+          $ref: '#/components/schemas/EstablishmentMedia'
+        is_favorited:
+          type: boolean
+    
+    EstablishmentWithMedia:
+      allOf:
+        - $ref: '#/components/schemas/EstablishmentBase'
+        - type: object
+          properties:
+            media:
+              type: array
+              items:
+                $ref: '#/components/schemas/EstablishmentMedia'
+            primary_image:
+              $ref: '#/components/schemas/EstablishmentMedia'
+            is_favorited:
+              type: boolean
+              description: "Whether current user has favorited this establishment"
+    
+    EstablishmentDetailed:
+      allOf:
+        - $ref: '#/components/schemas/EstablishmentWithMedia'
+        - type: object
+          properties:
+            recent_reviews:
+              type: array
+              items:
+                $ref: '#/components/schemas/Review'
+              maxItems: 5
+            active_promotions:
+              type: array
+              items:
+                $ref: '#/components/schemas/Promotion'
+    
+    # Modified 2025-09-30: Added WebP format support and optimized URL structure
+    EstablishmentMedia:
+      type: object
+      description: |
+        Media URLs automatically include Cloudinary optimization parameters:
+        - f_auto: Automatic format selection (WebP for modern clients, JPEG fallback)
+        - q_auto: Automatic quality optimization based on content
+        - fl_progressive: Progressive JPEG encoding for faster perceived loading
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [interior, exterior, menu, dishes]
+        url:
+          type: string
+          format: uri
+          description: "Full resolution URL with format optimization (f_auto,q_auto,fl_progressive)"
+        thumbnail_url:
+          type: string
+          format: uri
+          description: "200x150 thumbnail with format optimization"
+        preview_url:
+          type: string
+          format: uri
+          description: "800x600 preview with format optimization"
+        caption:
+          type: string
+        position:
+          type: integer
+        is_primary:
+          type: boolean
+    
+    EstablishmentCreate:
+      type: object
+      required: [name, city, address, latitude, longitude, categories, cuisines, working_hours]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        city:
+          type: string
+          enum: [Минск, Гродно, Брест, Гомель, Витебск, Могилев, Бобруйск]
+        address:
+          type: string
+          maxLength: 500
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        website:
+          type: string
+          format: uri
+        categories:
+          type: array
+          items:
+            type: string
+          maxItems: 2
+        cuisines:
+          type: array
+          items:
+            type: string
+          maxItems: 3
+        price_range:
+          type: string
+          enum: [$, $$, $$$]
+        working_hours:
+          type: object
+        special_hours:
+          type: object
+        attributes:
+          type: object
+    
+    # Modified 2025-09-30: Added RankingScoreBreakdown for transparency
+    RankingScoreBreakdown:
+      type: object
+      description: |
+        Detailed breakdown of ranking score calculation for debugging and transparency.
+        Available only to establishment partners viewing their own listings and admins.
+      properties:
+        final_score:
+          type: number
+          format: float
+          description: "Total ranking score (0-300)"
+        distance_factor:
+          type: object
+          properties:
+            score:
+              type: number
+              description: "Distance component (0-100)"
+            weight:
+              type: number
+              description: "Weight applied (default 0.35)"
+            contribution:
+              type: number
+              description: "Weighted contribution to final score"
+            actual_distance_meters:
+              type: number
+        quality_factor:
+          type: object
+          properties:
+            score:
+              type: number
+              description: "Quality component (0-100)"
+            weight:
+              type: number
+              description: "Weight applied (default 0.40)"
+            contribution:
+              type: number
+              description: "Weighted contribution to final score"
+            rating_component:
+              type: number
+              description: "Points from average rating (0-50)"
+            review_component:
+              type: number
+              description: "Points from review count (0-50)"
+        subscription_factor:
+          type: object
+          properties:
+            score:
+              type: number
+              description: "Subscription component (0-50)"
+            weight:
+              type: number
+              description: "Weight applied (default 0.25)"
+            contribution:
+              type: number
+              description: "Weighted contribution to final score"
+            tier:
+              type: string
+              enum: [free, basic, standard, premium]
+            tier_value:
+              type: integer
+              description: "Base points: free=0, basic=15, standard=35, premium=50"
+        context:
+          type: object
+          properties:
+            sort_by:
+              type: string
+              description: "User's sort preference affecting weight distribution"
+            user_velocity:
+              type: number
+              description: "GPS velocity in m/s, affects distance weight for moving users"
+    
+    # =================================================================
+    # REVIEW SCHEMAS
+    # =================================================================
+    Review:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            avatar_url:
+              type: string
+              format: uri
+        establishment_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        text:
+          type: string
+        is_visible:
+          type: boolean
+        is_edited:
+          type: boolean
+        partner_response:
+          type: string
+        partner_responded_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    
+    ReviewCreate:
+      type: object
+      required: [establishment_id, rating]
+      properties:
+        establishment_id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        text:
+          type: string
+          maxLength: 2000
+    
+    # =================================================================
+    # SEARCH & FILTER SCHEMAS
+    # =================================================================
+    EstablishmentFilters:
+      type: object
+      properties:
+        city:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        radius:
+          type: integer
+          description: "Search radius in meters"
+        categories:
+          type: array
+          items:
+            type: string
+        cuisines:
+          type: array
+          items:
+            type: string
+        price_range:
+          type: array
+          items:
+            type: string
+            enum: [$, $$, $$$]
+        attributes:
+          type: array
+          items:
+            type: string
+        open_now:
+          type: boolean
+        rating_min:
+          type: number
+          minimum: 1
+          maximum: 5
+        sort_by:
+          type: string
+          enum: [relevance, distance, rating, price_asc, price_desc, popularity, newest]
+          default: relevance
+          description: |
+            Modified 2025-09-30: Sort preference affects ranking weight distribution.
+            - relevance: Default balanced weights (distance=0.35, quality=0.40, subscription=0.25)
+            - rating: Increases quality weight to 0.60, reduces distance to 0.25
+            - distance: User explicitly wants closest results, weight unchanged
+            Other sorts apply after ranking calculation.
+    
+    SearchResponse:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/EstablishmentWithMedia'
+            meta:
+              $ref: '#/components/schemas/PaginationMeta'
+            filters:
+              type: object
+              description: "Applied filter summary"
+    
+    # =================================================================
+    # PARTNER & ADMIN SCHEMAS
+    # =================================================================
+    PartnerRegistration:
+      allOf:
+        - $ref: '#/components/schemas/UserRegistration'
+        - type: object
+          properties:
+            company_name:
+              type: string
+            tax_id:
+              type: string
+            contact_person:
+              type: string
+            document_files:
+              type: array
+              items:
+                type: string
+                format: uri
+    
+    PartnerDocument:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        document_type:
+          type: string
+        document_url:
+          type: string
+          format: uri
+        company_name:
+          type: string
+        tax_id:
+          type: string
+        contact_person:
+          type: string
+        contact_email:
+          type: string
+        verified:
+          type: boolean
+        verified_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    
+    # =================================================================
+    # ANALYTICS SCHEMAS
+    # =================================================================
+    AnalyticsData:
+      type: object
+      properties:
+        establishment_id:
+          type: string
+          format: uuid
+        period:
+          type: object
+          properties:
+            start_date:
+              type: string
+              format: date
+            end_date:
+              type: string
+              format: date
+        metrics:
+          type: object
+          properties:
+            views:
+              type: array
+              items:
+                type: object
+                properties:
+                  date:
+                    type: string
+                    format: date
+                  count:
+                    type: integer
+            favorites:
+              type: array
+              items:
+                type: object
+                properties:
+                  date:
+                    type: string
+                    format: date
+                  count:
+                    type: integer
+            reviews:
+              type: array
+              items:
+                type: object
+                properties:
+                  date:
+                    type: string
+                    format: date
+                  count:
+                    type: integer
+        summary:
+          type: object
+          properties:
+            total_views:
+              type: integer
+            total_favorites:
+              type: integer
+            total_reviews:
+              type: integer
+            average_rating:
+              type: number
+              format: float
+    
+    # =================================================================
+    # PROMOTION & SUBSCRIPTION SCHEMAS
+    # =================================================================
+    Promotion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        terms_and_conditions:
+          type: string
+        valid_from:
+          type: string
+          format: date
+        valid_until:
+          type: string
+          format: date
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    
+    PromotionCreate:
+      type: object
+      required: [title, valid_from, valid_until]
+      properties:
+        title:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        terms_and_conditions:
+          type: string
+        valid_from:
+          type: string
+          format: date
+        valid_until:
+          type: string
+          format: date
+    
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tier:
+          type: string
+          enum: [basic, standard, premium]
+        duration_type:
+          type: string
+          enum: [day, three_days, week, month]
+        started_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+        auto_renew:
+          type: boolean
+
+# =================================================================
+# API ENDPOINTS
+# =================================================================
+paths:
+  # =================================================================
+  # AUTHENTICATION & USER MANAGEMENT
+  # =================================================================
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register new user
+      description: |
+        Creates new user account with specified authentication method.
+        Passwords are hashed using Argon2id (memory=16MB, iterations=3, parallelism=1).
+        
+        Rate limit: 300 requests/hour per IP (unauthenticated).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegistration'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid registration data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitError'
+  
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: User login
+      description: |
+        Authenticates user and returns JWT access token with refresh token.
+        Access token expires in 15 minutes, refresh token in 30 days.
+        
+        Modified 2025-09-30: Refresh tokens are single-use and invalidated upon refresh.
+        
+        Rate limit: 300 requests/hour per IP (unauthenticated).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuthTokens'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimitError'
+  
+  # Modified 2025-09-30: Enhanced refresh endpoint with token rotation security
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh access token with strict token rotation
+      description: |
+        Exchanges a valid refresh token for new access and refresh tokens.
+        
+        SECURITY: Token Rotation Strategy (Modified 2025-09-30)
+        - The provided refresh token is immediately invalidated after successful use
+        - A new refresh token is issued and must be stored by the client
+        - Attempting to reuse an invalidated refresh token triggers security alert
+        - All user sessions are invalidated if token reuse is detected
+        
+        This prevents token reuse attacks where stolen refresh tokens could be
+        used alongside legitimate user sessions for extended periods.
+        
+        Rate limit: 300 requests/hour per IP (unauthenticated).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  description: Single-use refresh token to be exchanged
+      responses:
+        '200':
+          description: Token refreshed successfully with new token pair
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuthTokens'
+        '401':
+          description: |
+            Invalid or expired refresh token. Client should prompt user to log in again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: |
+            Token reuse detected - security violation. All user sessions have been
+            invalidated. User must log in again with credentials.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - type: object
+                    properties:
+                      error_code:
+                        type: string
+                        example: TOKEN_REUSE_DETECTED
+  
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: User logout with token invalidation
+      description: |
+        Logs out current user and invalidates their refresh token.
+        Access token remains valid until expiry but is removed from client.
+        
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+  
+  # Modified 2025-09-30: Added OAuth endpoints with explicit data handling
+  /auth/oauth/google:
+    post:
+      tags: [Authentication]
+      summary: Google OAuth authentication
+      description: |
+        Authenticates user via Google OAuth 2.0.
+        
+        OAuth Security (Modified 2025-09-30):
+        - Request scopes: 'email' and 'profile' only (minimal necessary data)
+        - Provider access tokens are NEVER stored after authentication completes
+        - Only user identity data (email, name, provider_user_id) is persisted
+        - Returning users are matched by provider_user_id for seamless login
+        
+        Rate limit: 300 requests/hour per IP (unauthenticated).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [authorization_code]
+              properties:
+                authorization_code:
+                  type: string
+                  description: Authorization code received from Google OAuth flow
+      responses:
+        '200':
+          description: OAuth authentication successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuthTokens'
+  
+  /auth/oauth/yandex:
+    post:
+      tags: [Authentication]
+      summary: Yandex OAuth authentication
+      description: |
+        Authenticates user via Yandex OAuth.
+        
+        OAuth Security (Modified 2025-09-30):
+        - Request scopes: 'login:email' and 'login:info' only
+        - Provider access tokens are NEVER stored after authentication completes
+        - Only user identity data (email, name, provider_user_id) is persisted
+        
+        Rate limit: 300 requests/hour per IP (unauthenticated).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [authorization_code]
+              properties:
+                authorization_code:
+                  type: string
+                  description: Authorization code received from Yandex OAuth flow
+      responses:
+        '200':
+          description: OAuth authentication successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AuthTokens'
+  
+  /users/profile:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+    
+    put:
+      tags: [Users]
+      summary: Update user profile
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                avatar_url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+  
+  # =================================================================
+  # ESTABLISHMENT SEARCH & DISCOVERY
+  # =================================================================
+  /establishments/search:
+    get:
+      tags: [Establishments]
+      summary: Search establishments with intelligent multi-factor ranking
+      description: |
+        Advanced search with geospatial filtering and intelligent ranking algorithm.
+        
+        Ranking Algorithm (Modified 2025-09-30):
+        Uses weighted multi-factor system balancing proximity, quality, and subscriptions:
+        - Distance Factor (35% default): Proximity to user location
+        - Quality Factor (40% default): Rating quality + review quantity
+        - Subscription Factor (25% default): Paid tier visibility boost
+        
+        Weight distribution adapts to user context:
+        - sort_by=rating: Quality weight increases to 60%
+        - High GPS velocity: Distance weight increases to 50% (user is moving quickly)
+        
+        This ensures fair, relevant results that incentivize subscriptions without
+        creating pay-to-win perception among users.
+        
+        Rate limit: 300 requests/hour per IP (unauthenticated) or 100 req/min (authenticated).
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search query (establishment name)
+        - name: city
+          in: query
+          schema:
+            type: string
+        - name: latitude
+          in: query
+          schema:
+            type: number
+            format: double
+          description: User's latitude for proximity ranking
+        - name: longitude
+          in: query
+          schema:
+            type: number
+            format: double
+          description: User's longitude for proximity ranking
+        - name: radius
+          in: query
+          schema:
+            type: integer
+            default: 5000
+          description: Search radius in meters
+        - name: categories
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: cuisines
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: price_range
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: attributes
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: open_now
+          in: query
+          schema:
+            type: boolean
+        - name: rating_min
+          in: query
+          schema:
+            type: number
+            minimum: 1
+            maximum: 5
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [relevance, distance, rating, price_asc, price_desc, popularity, newest]
+            default: relevance
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 50
+      responses:
+        '200':
+          description: Search results retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  
+  # Modified 2025-09-30: Added progressive loading support via include parameter
+  /establishments/{id}:
+    get:
+      tags: [Establishments]
+      summary: Get establishment details with progressive loading support
+      description: |
+        Retrieves establishment information with optional progressive data loading.
+        
+        Progressive Loading Strategy (Modified 2025-09-30):
+        Mobile apps should use staged loading for optimal performance:
+        
+        1. Initial load (no include parameter): ~8KB response with essential info
+           - Basic details, today's hours, primary image, rating summary
+           - Loads in <1 second even on 3G networks
+        
+        2. Progressive loads as user scrolls:
+           - include=media: Full photo gallery (~30-50KB)
+           - include=reviews: Recent reviews (~15-20KB)
+           - include=promotions: Active promotions (~5-10KB)
+           - include=all: Everything in one request (~60-80KB, desktop only)
+        
+        This creates perception of instant loading while reducing wasted bandwidth
+        for content users may never view.
+        
+        Rate limit: 300 requests/hour per IP (unauthenticated) or 100 req/min (authenticated).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: include
+          in: query
+          schema:
+            type: string
+            enum: [media, reviews, promotions, all]
+          description: |
+            Optional progressive loading parameter:
+            - (none): Minimal response with essential info only (~8KB)
+            - media: Adds full photo gallery
+            - reviews: Adds recent reviews
+            - promotions: Adds active promotions
+            - all: Returns complete detailed response
+      responses:
+        '200':
+          description: Establishment details retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        oneOf:
+                          - $ref: '#/components/schemas/EstablishmentMinimal'
+                          - $ref: '#/components/schemas/EstablishmentDetailed'
+        '404':
+          description: Establishment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  # Modified 2025-09-30: Added ranking transparency endpoint for partners
+  /establishments/{id}/ranking:
+    get:
+      tags: [Establishments]
+      summary: Get detailed ranking score breakdown (Partners & Admins only)
+      description: |
+        Returns detailed breakdown of ranking score calculation for transparency.
+        Available only to establishment partners viewing their own listings and admins.
+        
+        Added 2025-09-30: Provides visibility into how multi-factor ranking works,
+        helping partners understand subscription value and identify improvement areas.
+        
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: latitude
+          in: query
+          schema:
+            type: number
+            format: double
+          description: Reference location for distance calculation
+        - name: longitude
+          in: query
+          schema:
+            type: number
+            format: double
+      responses:
+        '200':
+          description: Ranking breakdown retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/RankingScoreBreakdown'
+        '403':
+          description: Not authorized to view this establishment's ranking details
+  
+  # =================================================================
+  # FAVORITES
+  # =================================================================
+  /favorites:
+    get:
+      tags: [Favorites]
+      summary: Get user's favorite establishments
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Favorites retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/EstablishmentWithMedia'
+                      meta:
+                        $ref: '#/components/schemas/PaginationMeta'
+  
+  /favorites/{establishment_id}:
+    post:
+      tags: [Favorites]
+      summary: Add establishment to favorites
+      description: |
+        Mobile apps should implement optimistic UI updates for instant feedback.
+        
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: establishment_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: Added to favorites successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    
+    delete:
+      tags: [Favorites]
+      summary: Remove establishment from favorites
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: establishment_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Removed from favorites successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+  
+  # =================================================================
+  # REVIEWS & RATINGS
+  # =================================================================
+  /establishments/{establishment_id}/reviews:
+    get:
+      tags: [Reviews]
+      summary: Get establishment reviews
+      description: |
+        Rate limit: 300 requests/hour per IP (unauthenticated) or 100 req/min (authenticated).
+      parameters:
+        - name: establishment_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Reviews retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Review'
+                      meta:
+                        $ref: '#/components/schemas/PaginationMeta'
+    
+    post:
+      tags: [Reviews]
+      summary: Create review
+      description: |
+        Creates new review for establishment. Database triggers automatically update
+        establishment's average_rating and review_count in real-time.
+        
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: establishment_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewCreate'
+      responses:
+        '201':
+          description: Review created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Review'
+  
+  # =================================================================
+  # PARTNER FUNCTIONALITY
+  # =================================================================
+  /partner/register:
+    post:
+      tags: [Partner]
+      summary: Partner registration with business verification
+      description: |
+        Rate limit: 300 requests/hour per IP (unauthenticated).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartnerRegistration'
+      responses:
+        '201':
+          description: Partner registered successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+  
+  /partner/establishments:
+    get:
+      tags: [Partner]
+      summary: Get partner's establishments
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Partner establishments retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/EstablishmentWithMedia'
+    
+    post:
+      tags: [Partner]
+      summary: Create new establishment
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EstablishmentCreate'
+      responses:
+        '201':
+          description: Establishment created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/EstablishmentBase'
+  
+  /partner/establishments/{id}/analytics:
+    get:
+      tags: [Partner]
+      summary: Get establishment analytics
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [7d, 30d, 90d]
+            default: 30d
+      responses:
+        '200':
+          description: Analytics data retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AnalyticsData'
+  
+  # =================================================================
+  # MEDIA MANAGEMENT
+  # =================================================================
+  /media/upload:
+    post:
+      tags: [Media]
+      summary: Upload media file with automatic optimization
+      description: |
+        Uploads media to Cloudinary with automatic optimization:
+        - Format: Automatic WebP for modern clients, JPEG fallback
+        - Quality: Content-aware automatic quality optimization
+        - Progressive: Progressive JPEG encoding for faster perceived load
+        - Resolutions: Generates thumbnail (200x150), preview (800x600), original
+        
+        Modified 2025-09-30: All image URLs include format optimization parameters.
+        
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                type:
+                  type: string
+                  enum: [interior, exterior, menu, dishes]
+                establishment_id:
+                  type: string
+                  format: uuid
+                caption:
+                  type: string
+      responses:
+        '201':
+          description: Media uploaded successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/EstablishmentMedia'
+  
+  # =================================================================
+  # ADMIN FUNCTIONALITY
+  # =================================================================
+  /admin/establishments/pending:
+    get:
+      tags: [Admin]
+      summary: Get establishments pending moderation
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Pending establishments retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/EstablishmentDetailed'
+                      meta:
+                        $ref: '#/components/schemas/PaginationMeta'
+  
+  /admin/establishments/{id}/moderate:
+    post:
+      tags: [Admin]
+      summary: Moderate establishment
+      description: |
+        Performs moderation action on establishment. All actions are logged
+        to audit_log table with full before/after state for transparency.
+        
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [approve, reject, request_changes]
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Moderation action completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+  
+  /admin/analytics/dashboard:
+    get:
+      tags: [Admin]
+      summary: Get admin dashboard analytics
+      description: |
+        Rate limit: 100 requests/minute (authenticated).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Dashboard data retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pending_moderation:
+                            type: integer
+                          active_users_today:
+                            type: integer
+                          new_registrations:
+                            type: integer
+                          active_establishments:
+                            type: integer
+                          active_subscriptions:
+                            type: integer
+
+# =================================================================
+# SECURITY DEFINITIONS
+# =================================================================
+security:
+  - BearerAuth: []
