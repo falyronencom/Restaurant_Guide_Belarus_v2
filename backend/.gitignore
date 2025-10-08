@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# EXCEPTION: .env.example should be committed as template
+!.env.example
+
 # Node dependencies
 node_modules/
 npm-debug.log*

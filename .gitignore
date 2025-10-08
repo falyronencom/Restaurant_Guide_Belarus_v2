@@ -28,6 +28,9 @@ logs/
 .env.local
 .env.*.local
 
+# EXCEPTION: .env.example should be committed as template
+!**/.env.example
+
 # Project-specific temporary files
 .cache/
 .temp/
