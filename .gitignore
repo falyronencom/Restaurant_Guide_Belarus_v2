@@ -1,0 +1,48 @@
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+
+# Log files
+*.log
+logs/
+
+# Environment variables - CRITICAL
+.env
+.env.local
+.env.*.local
+
+# Project-specific temporary files
+.cache/
+.temp/
+
+# Backup files
+*.bak
+*~
+
+# Flutter/Dart specific
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.pub-cache/
+.pub/
+
