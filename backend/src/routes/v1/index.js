@@ -1,5 +1,6 @@
 import express from 'express';
 import { healthCheck } from '../../controllers/healthController.js';
+import authRoutes from './authRoutes.js';
 
 const router = express.Router();
 
@@ -33,6 +34,14 @@ const router = express.Router();
  * Response always includes database and Redis health status plus system metrics.
  */
 router.get('/health', healthCheck);
+
+/**
+ * Authentication routes - /api/v1/auth/*
+ * 
+ * Handles user authentication, registration, login, token refresh, and logout.
+ * Implemented in authRoutes.js with comprehensive security measures.
+ */
+router.use('/auth', authRoutes);
 
 /**
  * Placeholder for future route modules.
