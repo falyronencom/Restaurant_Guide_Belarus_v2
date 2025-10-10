@@ -170,4 +170,6 @@ export const getClient = async () => {
   return await pool.connect();
 };
 
+// Export pool as both named and default export for flexibility
+export { pool };
 export default pool;
