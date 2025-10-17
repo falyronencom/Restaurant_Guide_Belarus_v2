@@ -104,11 +104,19 @@ flutter run -d chrome
 
 Рекомендуем начать изучение проекта в следующем порядке:
 
-1. **[Методология разработки](docs/00_methodology/collaborative_development_v5.md)** — философия проекта и подходы к со-творчеству с AI
-2. **[Функциональная спецификация v3](docs/01_specifications/functional_spec_v3.md)** — полное описание функциональности и бизнес-требований
-3. **[Схема базы данных v2.0](docs/02_architecture/database_schema_v2.0.sql)** — структура данных и отношения
-4. **[API Спецификация v2.0](docs/02_architecture/api_specification_v2.0.yaml)** — OpenAPI описание всех endpoints
-5. **[API Architecture Review](docs/01_specifications/api_architecture_review_v1.1.md)** — архитектурный обзор критических решений
+1. **[Методология разработки](../docs/00_methodology/collaborative_development_v5.md)** — философия проекта и подходы к со-творчеству с AI
+2. **[Функциональная спецификация v3](../docs/01_specifications/functional_spec_v3.md)** — полное описание функциональности и бизнес-требований
+3. **[Схема базы данных v2.0](../docs/02_architecture/database_schema_v2.0.sql)** — структура данных и отношения
+4. **[API Спецификация v2.0](../docs/02_architecture/api_specification_v2.0.yaml)** — OpenAPI описание всех endpoints
+5. **[API Architecture Review](../docs/01_specifications/api_architecture_review_v1.1.md)** — архитектурный обзор критических решений
+
+### Feature Documentation
+
+Документация по конкретным функциям backend:
+
+- **[Reviews System Testing Guide](REVIEWS_TESTING_GUIDE.md)** — руководство по тестированию системы отзывов для QA и Product Team
+- **[Reviews System Implementation Notes](REVIEWS_IMPLEMENTATION_NOTES.md)** — архитектурные решения и обоснование для разработчиков
+- **[Search Implementation Notes](SEARCH_IMPLEMENTATION_NOTES.md)** — документация по системе поиска заведений
 
 ## Текущий статус проекта
 
