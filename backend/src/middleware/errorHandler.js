@@ -1,4 +1,5 @@
 import logger from '../utils/logger.js';
+import { validationResult } from 'express-validator';
 
 /**
  * Custom error class for application-specific errors.
@@ -165,6 +166,56 @@ export const asyncHandler = (fn) => {
   return (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
   };
+};
+
+/**
+ * Validation error handler middleware.
+ * 
+ * This middleware processes the results of express-validator validation chains.
+ * It should be placed after validation middleware and before the controller.
+ * 
+ * If validation fails, it formats the errors and returns a 400 Bad Request response.
+ * If validation passes, it calls next() to proceed to the controller.
+ * 
+ * Usage:
+ * router.post('/endpoint',
+ *   validateSomething,  // express-validator validation chain
+ *   validate,           // this middleware checks for errors
+ *   controller          // only reached if validation passes
+ * );
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+export const validate = (req, res, next) => {
+  const errors = validationResult(req);
+  
+  if (!errors.isEmpty()) {
+    // Format validation errors for client response
+    const formattedErrors = errors.array().map(err => ({
+      field: err.path || err.param,
+      message: err.msg,
+      value: err.value
+    }));
+
+    logger.warn('Request validation failed', {
+      path: req.path,
+      method: req.method,
+      errors: formattedErrors,
+      correlationId: req.correlationId,
+    });
+
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      error_code: 'VALIDATION_ERROR',
+      errors: formattedErrors,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  next();
 };
 
 /**

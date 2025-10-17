@@ -1,6 +1,8 @@
 import express from 'express';
 import { healthCheck } from '../../controllers/healthController.js';
 import authRoutes from './authRoutes.js';
+import searchRoutes from './searchRoutes.js';
+import reviewRoutes from './reviewRoutes.js';
 
 const router = express.Router();
 
@@ -42,6 +44,34 @@ router.get('/health', healthCheck);
  * Implemented in authRoutes.js with comprehensive security measures.
  */
 router.use('/auth', authRoutes);
+
+/**
+ * Search and Discovery routes - /api/v1/search/*
+ * 
+ * Handles establishment search with geospatial queries and intelligent ranking.
+ * Implemented in searchRoutes.js with PostGIS integration.
+ * 
+ * Endpoints:
+ * - GET /api/v1/search/health - Search system health check
+ * - GET /api/v1/search/establishments - List view search (radius-based)
+ * - GET /api/v1/search/map - Map view search (bounds-based)
+ */
+router.use('/search', searchRoutes);
+
+/**
+ * Review Management routes - /api/v1/reviews/*
+ * 
+ * Handles user-generated reviews with CRUD operations, rate limiting, and aggregation.
+ * Implemented in reviewRoutes.js with soft deletion and author verification.
+ * 
+ * Endpoints:
+ * - POST /api/v1/reviews - Create a review (authenticated)
+ * - GET /api/v1/reviews/quota - Check review quota (authenticated)
+ * - GET /api/v1/reviews/:id - Get specific review (public)
+ * - PUT /api/v1/reviews/:id - Update review (authenticated, author only)
+ * - DELETE /api/v1/reviews/:id - Delete review (authenticated, author only)
+ */
+router.use('/reviews', reviewRoutes);
 
 /**
  * Placeholder for future route modules.
