@@ -30,6 +30,7 @@ import authRoutes from './authRoutes.js';
 import searchRoutes from './searchRoutes.js';
 import reviewRoutes from './reviewRoutes.js';
 import favoriteRoutes from './favoriteRoutes.js';
+import establishmentRoutes from './establishmentRoutes.js';
 
 const router = express.Router();
 
@@ -152,16 +153,41 @@ router.use('/reviews', reviewRoutes);
 router.use('/favorites', favoriteRoutes);
 
 /**
+ * /api/v1/partner/establishments/*
+ * 
+ * Partner establishment management endpoints.
+ * 
+ * Provides complete establishment CRUD functionality for partners:
+ * - GET /partner/establishments - List all partner establishments with pagination
+ * - POST /partner/establishments - Create new establishment in draft status
+ * - GET /partner/establishments/:id - Get establishment details
+ * - PUT /partner/establishments/:id - Update establishment information
+ * - POST /partner/establishments/:id/submit - Submit establishment for moderation
+ * 
+ * All endpoints require authentication and 'partner' role. Partners can only
+ * manage their own establishments - ownership is verified by the service layer.
+ * 
+ * The establishment management system implements a draft-pending-active workflow:
+ * 1. Partner creates establishment in 'draft' status
+ * 2. Partner adds all required information and media
+ * 3. Partner submits for moderation (status changes to 'pending')
+ * 4. Admin reviews and approves (status changes to 'active')
+ * 
+ * Major changes to active establishments automatically reset status to 'pending'
+ * to require re-moderation, ensuring data quality and preventing abuse.
+ * 
+ * Implementation note: Establishments were implemented by a specialized Leaf session
+ * focused on partner management features. The implementation includes comprehensive
+ * validation (Belarus-specific cities, coordinates, categories), ownership verification,
+ * status transition logic, and integration with the media management system.
+ */
+router.use('/partner/establishments', establishmentRoutes);
+
+/**
  * Placeholder for future route modules
  * 
  * As additional features are implemented in specialized Leaf sessions,
  * they will be imported and mounted here. Planned future modules include:
- * 
- * import establishmentRoutes from './establishmentRoutes.js';
- * router.use('/establishments', establishmentRoutes);
- * - Search establishments with filters and geolocation
- * - Get establishment details with reviews and media
- * - Manage establishments (partners only)
  * 
  * import userRoutes from './userRoutes.js';
  * router.use('/users', userRoutes);
