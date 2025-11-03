@@ -69,7 +69,7 @@ restaurant-guide-belarus/
 │   │   ├── services/    # Бизнес-логика
 │   │   ├── middleware/  # Аутентификация и авторизация
 │   │   ├── routes/      # Определение API endpoints
-│   │   ├── config/      # Конфигурация БД и Redis
+│   │   ├── config/      # Конфигурация БД, Redis и Cloudinary
 │   │   └── utils/       # Вспомогательные функции
 │   ├── migrations/      # Миграции базы данных
 │   └── tests/           # Тесты backend
@@ -95,6 +95,25 @@ restaurant-guide-belarus/
 - Git
 
 ### Локальная разработка
+
+**Database Setup**:
+
+Перед запуском backend необходимо настроить PostgreSQL с PostGIS:
+
+```bash
+# 1. Запустить PostgreSQL с PostGIS через Docker
+docker-compose up -d postgres
+
+# 2. Применить миграции базы данных
+cd backend/migrations
+# Следуйте инструкциям в MIGRATION_GUIDE.md
+
+# 3. Заполнить тестовыми данными
+cd backend
+npm run seed
+```
+
+📖 Подробное руководство: **[Database Migration Guide](backend/migrations/MIGRATION_GUIDE.md)**
 
 **Backend**:
 ```bash
@@ -126,10 +145,13 @@ flutter run -d chrome
 3. **[Схема базы данных v2.0](docs/02_architecture/database_schema_v2.0.sql)** — структура данных и отношения
 4. **[API Спецификация v2.0](docs/02_architecture/api_specification_v2.0.yaml)** — OpenAPI описание всех endpoints
 5. **[API Architecture Review](docs/01_specifications/api_architecture_review_v1.1.md)** — архитектурный обзор критических решений
+6. **[Database Migration Guide](backend/migrations/MIGRATION_GUIDE.md)** — руководство по миграции PostGIS для геопространственного поиска
+7. **[Establishments Handoff Documentation](backend/HANDOFF_ESTABLISHMENTS.md)** — техническая документация системы управления заведениями
 
 ## Текущий статус проекта
 
-**Фаза**: Активная разработка (Active Development Phase)
+**Фаза**: Переход к Mobile Development Phase (Фаза 5)  
+**Последнее обновление**: Ноябрь 2025
 
 ### Реализованные компоненты ✅
 
@@ -137,8 +159,9 @@ flutter run -d chrome
 - Express сервер с production-ready middleware stack
 - PostgreSQL connection pooling с автоматическим мониторингом производительности
 - Redis интеграция для кэширования и rate limiting
+- Cloudinary интеграция для хранения и оптимизации изображений
 - Graceful shutdown handlers и error handling
-- Layered architecture с чёткой separation of concerns
+- Layered architecture с чётной separation of concerns
 
 **Authentication System** (Leaf Session 1):
 - JWT-based авторизация с access и refresh tokens
@@ -174,6 +197,22 @@ flutter run -d chrome
 - Idempotent operations для better UX
 - Rich establishment details в responses для минимизации API calls
 
+**Establishments Management System** (Leaf Sessions 5-6):
+- Complete partner registration flow с multi-step validation
+- Establishment CRUD operations с draft-pending-active workflow
+- Belarus-specific validation: cities, coordinates (51-56°N / 23-33°E), categories, cuisines
+- Ownership verification per partner для безопасности
+- Automatic status transitions при major changes
+- Media management с Cloudinary integration:
+  * Three-resolution system: original (1920x1080), preview (800x600), thumbnail (200x150)
+  * Automatic optimization: WebP, quality_auto, progressive loading
+  * Tier-based upload limits (Free: 10+10, Basic: 15+15, Standard: 20+20, Premium: 30+30)
+  * Primary photo management с automatic promotion
+  * Cascading delete (Cloudinary + Database)
+- Moderation workflow: draft → pending → active → suspended
+- Comprehensive validation и error handling
+- Full integration testing completed
+
 **Database Schema**:
 - Complete schema с всеми таблицами и relationships
 - PostGIS spatial indexes для географических запросов
@@ -181,38 +220,43 @@ flutter run -d chrome
 - Migration scripts для version control
 - Optimized indexes для performance
 
+**Quality Assurance**:
+- Smoke testing для всех систем завершён
+- Integration testing для Establishments Management выполнен
+- Comprehensive testing documentation создана
+- All critical paths validated
+
 ### В разработке ⏳
 
-**Quality Assurance**:
-- Интеграционное тестирование критических путей
-- Smoke testing для основного функционала
-- Load testing с реалистичными данными
-
-**Establishments Management** (следующий приоритет):
-- Partner registration flow
-- Establishment CRUD операции
-- Media management с Cloudinary интеграцией
-- Moderation workflow
+**Mobile MVP Frontend** (текущий приоритет):
+- Flutter project initialization
+- Core UI screens implementation
+- API integration layer
+- State management setup
+- Maps integration
+- Offline support strategy
 
 ### Запланировано 📋
 
 **Partner Features**:
 - Analytics dashboard
-- Subscription management
+- Subscription management system
 - Promotion system
-- Review response management
+- Advanced review response management
 
 **Admin Panel**:
-- Content moderation interface
-- User management
+- Web admin interface с Flutter Web
+- Content moderation workflow
+- User management tools
 - Analytics and reporting
-- System monitoring
+- System monitoring dashboard
 
-**Mobile Application**:
-- Flutter app initialization
-- UI implementation
-- API integration
-- Offline support
+**Advanced Features**:
+- Push notifications
+- In-app messaging
+- Advanced search filters
+- Personalized recommendations
+- Social features
 
 ## Roadmap по фазам
 
@@ -230,47 +274,67 @@ flutter run -d chrome
 - Reviews system
 - Favorites system
 
-### ⏳ Фаза 3: Quality Assurance (В процессе)
-- Integration testing
-- Performance optimization
-- Security hardening
-- Documentation finalization
+### ✅ Фаза 3: Quality Assurance - Backend Core (Завершена)
+- Integration testing для core systems
+- Smoke testing для basic functionality
+- Documentation validation
+- Security review
 
-### 📋 Фаза 4: Establishments Management
+### ✅ Фаза 4: Establishments Management (Завершена)
 - Partner registration flow
-- Establishment CRUD
-- Media management
+- Establishment CRUD operations
+- Media management с Cloudinary integration
 - Moderation workflow
-
-### 📋 Фаза 5: Mobile MVP Frontend
-- Flutter project setup
-- Core UI screens
-- API integration
-- Maps integration
-
-### 📋 Фаза 6: Partner Features
-- Analytics dashboard
-- Subscription system
-- Promotion management
-- Review responses
-
-### 📋 Фаза 7: Admin Panel
-- Web admin interface
-- Content moderation
-- User management
-- System analytics
-
-### 📋 Фаза 8: Testing & Polish
 - Comprehensive testing
+
+### ⏳ Фаза 5: Mobile MVP Frontend (Текущая фаза)
+- Flutter project setup
+- Core UI screens:
+  * Стартовый экран с фильтрами
+  * Список заведений с карточками
+  * Детальная карточка заведения
+  * Map view с markers
+  * Профиль пользователя
+  * Избранное
+- API integration layer
+- State management implementation
+- Maps integration (Google Maps / OpenStreetMap)
+- Image caching и optimization
+- Offline support foundation
+
+### 📋 Фаза 6: User Features Integration
+- Authentication flow в mobile app
+- Reviews создание и просмотр
+- Favorites management
+- User profile management
+- Push notifications setup
+
+### 📋 Фаза 7: Partner Mobile Features
+- Partner dashboard в mobile
+- Establishment management
+- Analytics viewing
+- Notifications
+
+### 📋 Фаза 8: Admin Web Panel
+- Flutter Web admin interface
+- Content moderation dashboard
+- User management
+- Analytics and reporting
+- System monitoring
+
+### 📋 Фаза 9: Testing & Polish
+- Comprehensive E2E testing
 - Performance optimization
 - UX refinement
 - Bug fixes
+- Security audit
 
-### 📋 Фаза 9: Launch Preparation
-- Production deployment
-- Monitoring setup
+### 📋 Фаза 10: Launch Preparation
+- Production deployment setup
+- Monitoring и logging
 - Marketing materials
-- Beta testing
+- Beta testing program
+- App Store submission
 
 Детальная дорожная карта доступна в [функциональной спецификации](docs/01_specifications/functional_spec_v3.md) и [Implementation Summary](backend/IMPLEMENTATION_SUMMARY.md).
 
@@ -309,8 +373,48 @@ flutter run -d chrome
 - Context-aware directive sizing (10-30 страниц в зависимости от сложности)
 - Explicit phased execution с checkpoints
 - Defensive context management для предотвращения overflow
+- Paradigm establishment для mobile development (Flutter/Dart vs Web)
 
 Подробная методология описана в [документации](docs/00_methodology/distributed_intelligence_v7.0.md).
+
+## Текущие приоритеты для Mobile Development
+
+На данный момент backend полностью готов для интеграции. Все необходимые API endpoints реализованы и протестированы. Следующий этап — создание мобильного приложения на Flutter, которое будет потреблять эти endpoints.
+
+**Критические задачи для Фазы 5**:
+
+1. **Flutter Project Initialization**:
+   - Настройка project structure согласно best practices
+   - Конфигурация для iOS и Android
+   - Интеграция зависимостей (Dio, Provider/Riverpod, Cached Network Image)
+
+2. **API Integration Layer**:
+   - HTTP client setup с базовой конфигурацией
+   - Authentication interceptors для JWT tokens
+   - Error handling и retry logic
+   - Response models синхронизированные с backend
+
+3. **Core Screens Implementation**:
+   - Стартовый экран с city selection и filters
+   - Список заведений с pagination
+   - Детальная карточка заведения с gallery
+   - Map view с establishment markers
+   - User profile и favorites
+
+4. **State Management**:
+   - Provider/Riverpod setup для global state
+   - Authentication state management
+   - Caching strategy для offline support
+
+5. **Maps Integration**:
+   - Google Maps SDK integration для iOS/Android
+   - Custom markers для establishments
+   - Location services и permissions
+
+**Документация для Mobile Development**:
+- [Functional Specification v3](docs/01_specifications/functional_spec_v3.md) — детальные UI/UX требования
+- [API Specification v2.0](docs/02_architecture/api_specification_v2.0.yaml) — все доступные endpoints
+- Backend handoff документы для понимания data structures
 
 ## Contributing
 
@@ -320,6 +424,19 @@ flutter run -d chrome
 2. Добавляйте comprehensive inline comments
 3. Обновляйте соответствующую документацию
 4. Создавайте descriptive commit messages с references на originating sessions
+5. Для Flutter development: всегда явно указывайте paradigm (Flutter/Dart, не Web)
+
+## Testing Guidelines
+
+**Backend Testing**:
+- Smoke tests для critical paths
+- Integration tests для all endpoints
+- Следуйте testing guides в backend/TESTING_*.md
+
+**Mobile Testing** (upcoming):
+- Widget tests для UI components
+- Integration tests для user flows
+- Platform-specific testing (iOS/Android)
 
 ## License
 
@@ -333,6 +450,28 @@ Proprietary - все права защищены.
 
 ---
 
-*Последнее обновление: Октябрь 2025*  
+## Recent Updates
+
+### Ноябрь 2025
+- ✅ **Establishments Management System** полностью реализована и протестирована
+- ✅ Media management с Cloudinary integration завершён
+- ✅ Comprehensive testing для Establishments выполнен
+- ✅ Backend готов для mobile integration
+- 🎯 **Переход к Фазе 5**: Mobile MVP Frontend Development
+
+### Октябрь 2025
+- ✅ Reviews System implementation
+- ✅ Favorites System implementation
+- ✅ Authentication System с refresh token rotation
+- ✅ Search & Discovery с PostGIS
+
+### Сентябрь 2025
+- ✅ Backend infrastructure setup
+- ✅ Database schema design
+- ✅ API specification v2.0
+
+---
+
+*Последнее обновление: Ноябрь 2025*  
 *Статус документа: Production-Ready*  
-*Next Review: После завершения Фазы 3 (Quality Assurance)*
+*Next Review: После завершения Фазы 5 (Mobile MVP Frontend)*
