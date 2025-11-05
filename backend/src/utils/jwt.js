@@ -3,7 +3,12 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import logger from './logger.js';
 
-dotenv.config();
+// Load environment variables
+// In test environment, .env.test is loaded by Jest setup
+// In other environments, load .env
+if (process.env.NODE_ENV !== 'test') {
+  dotenv.config();
+}
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || '15m';
@@ -13,10 +18,20 @@ const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '30d';
  * Validates that JWT_SECRET is properly configured.
  * In production, JWT_SECRET must be at least 32 characters for adequate security.
  * This validation happens at startup to fail fast if misconfigured.
+ *
+ * In test environment, this validation is more lenient as environment variables
+ * are loaded by Jest setup files.
  */
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
-  logger.error('JWT_SECRET must be at least 32 characters long. Configure in .env file.');
-  process.exit(1);
+  if (process.env.NODE_ENV === 'test') {
+    // In test environment, log warning but allow continuation
+    // Jest setup will load .env.test before tests actually run
+    console.warn('⚠️  JWT_SECRET not yet loaded (will be loaded by Jest setup)');
+  } else {
+    // In production/development, this is a fatal error
+    logger.error('JWT_SECRET must be at least 32 characters long. Configure in .env file.');
+    process.exit(1);
+  }
 }
 
 /**

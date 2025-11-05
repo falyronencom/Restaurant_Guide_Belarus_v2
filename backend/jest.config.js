@@ -13,7 +13,10 @@ export default {
   // Use Node.js environment (not browser)
   testEnvironment: 'node',
 
-  // Setup file runs before all test suites
+  // Load environment variables BEFORE any imports
+  setupFiles: ['<rootDir>/src/tests/setup-env.js'],
+
+  // Setup file runs after test framework initialized
   setupFilesAfterEnv: ['<rootDir>/src/tests/setup.js'],
 
   // Teardown runs after all tests complete
@@ -42,7 +45,7 @@ export default {
   ],
 
   // Coverage thresholds (fail if below these)
-  coverageThresholds: {
+  coverageThreshold: {
     global: {
       statements: 75,
       branches: 70,
