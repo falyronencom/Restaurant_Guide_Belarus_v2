@@ -119,6 +119,9 @@ export function generateTestAccessToken(user) {
  * Store refresh token in database (or Redis in production)
  * For tests, we'll use a simple database table
  *
+ * NOTE: Test helper uses simplified logic - deletes old tokens before inserting new one
+ * Production code allows multiple active tokens per user for token rotation
+ *
  * @param {string} userId - User ID
  * @param {string} refreshToken - Refresh token
  */
@@ -126,14 +129,17 @@ export async function storeRefreshToken(userId, refreshToken) {
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 30); // 30 days
 
+  // For tests, keep only one token per user (simplifies test logic)
+  // Delete any existing tokens for this user first
+  await pool.query('DELETE FROM refresh_tokens WHERE user_id = $1', [userId]);
+
+  // Insert new token (matching production schema with used_at column from migration 001)
   const query = `
-    INSERT INTO refresh_tokens (user_id, token, expires_at, created_at)
-    VALUES ($1, $2, $3, $4)
-    ON CONFLICT (user_id) DO UPDATE
-    SET token = $2, expires_at = $3, created_at = $4
+    INSERT INTO refresh_tokens (user_id, token, expires_at, created_at, used_at)
+    VALUES ($1, $2, $3, $4, $5)
   `;
 
-  await pool.query(query, [userId, refreshToken, expiresAt, new Date()]);
+  await pool.query(query, [userId, refreshToken, expiresAt, new Date(), null]);
 }
 
 /**
