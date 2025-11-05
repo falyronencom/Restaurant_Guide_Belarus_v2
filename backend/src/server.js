@@ -196,10 +196,19 @@ const startServer = async () => {
 };
 
 // Create HTTP server instance (needed for graceful shutdown)
-const server = app.listen(0); // Listen on port 0 temporarily
-server.close(); // Close it immediately
+let server;
 
-// Start the application
-startServer();
+// Only start server if not in test environment
+// In tests, app is imported without starting the server
+if (process.env.NODE_ENV !== 'test') {
+  server = app.listen(0); // Listen on port 0 temporarily
+  server.close(); // Close it immediately
+
+  // Start the application
+  startServer();
+} else {
+  // In test environment, create a mock server reference
+  server = { close: () => {}, listen: () => {} };
+}
 
 export default app;
