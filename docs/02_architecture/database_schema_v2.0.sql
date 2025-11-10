@@ -253,11 +253,17 @@ CREATE TABLE refresh_tokens (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token VARCHAR(500) NOT NULL UNIQUE,
     expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    used_at TIMESTAMP,
+    replaced_by UUID REFERENCES refresh_tokens(id)
 );
 
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_token ON refresh_tokens(token);
+CREATE INDEX idx_refresh_tokens_used_at ON refresh_tokens(used_at);
+
+COMMENT ON COLUMN refresh_tokens.used_at IS 'Timestamp when this token was used for refresh. NULL means token is still valid. Non-NULL indicates token has been consumed and should not be accepted.';
+COMMENT ON COLUMN refresh_tokens.replaced_by IS 'ID of the new refresh token that replaced this one during rotation. Useful for audit trail and debugging.';
 
 -- =====================================================
 -- PARTNER VERIFICATION DOCUMENTS

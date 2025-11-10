@@ -7,6 +7,10 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "test": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:verbose": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js --verbose",
     "lint": "eslint src/**/*.js",
     "format": "prettier --write \"src/**/*.js\"",
     "seed": "node scripts/seed-establishments.js",
@@ -40,8 +44,11 @@
     "winston": "^3.11.0"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "eslint": "^8.54.0",
-    "prettier": "^3.1.0"
+    "jest": "^30.2.0",
+    "prettier": "^3.1.0",
+    "supertest": "^7.1.4"
   },
   "engines": {
     "node": ">=18.0.0"

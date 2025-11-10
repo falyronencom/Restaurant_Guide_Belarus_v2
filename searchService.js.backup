@@ -1,0 +1,495 @@
+/**
+ * Search Service - Business Logic Layer
+ * 
+ * This service handles all establishment search operations including:
+ * - Geospatial proximity search using PostGIS
+ * - Multi-factor ranking algorithm (distance + quality + subscription)
+ * - Comprehensive filtering with proper AND/OR logic
+ * - Cursor-based pagination for infinite scroll
+ * - Both list view (radius-based) and map view (bounds-based) modes
+ * 
+ * Performance targets:
+ * - Initial search: < 300ms
+ * - Pagination: < 200ms
+ * - Map bounds: < 200ms
+ */
+
+import { pool } from '../config/database.js';
+
+/**
+ * Main search function for list view (radius-based search)
+ * 
+ * This is the primary search method users interact with - finding establishments
+ * near their current location with optional filtering and intelligent ranking.
+ * 
+ * @param {Object} options - Search parameters
+ * @param {Object} options.userLocation - User's coordinates {lat, lon}
+ * @param {number} options.radiusMeters - Search radius in meters (default: 3000)
+ * @param {Object} options.filters - Filter criteria
+ * @param {string[]} options.filters.categories - Establishment categories (OR logic)
+ * @param {string[]} options.filters.cuisines - Cuisine types (OR logic)
+ * @param {string[]} options.filters.priceRanges - Price ranges (OR logic)
+ * @param {string[]} options.filters.features - Required features (AND logic)
+ * @param {string} options.filters.hoursFilter - Operating hours filter
+ * @param {string} options.paginationCursor - Cursor for next page
+ * @param {number} options.pageSize - Results per page (default: 20)
+ * @returns {Promise<Object>} Search results with pagination metadata
+ */
+async function searchEstablishments(options) {
+  const {
+    userLocation,
+    radiusMeters = 3000,
+    filters = {},
+    paginationCursor = null,
+    pageSize = 20
+  } = options;
+
+  // Validate user location
+  if (!userLocation || typeof userLocation.lat !== 'number' || typeof userLocation.lon !== 'number') {
+    throw new Error('Valid user location with lat and lon is required');
+  }
+
+  // Build the complete search query with ranking algorithm
+  const query = buildSearchQuery(userLocation, radiusMeters, filters, paginationCursor, pageSize);
+
+  try {
+    const result = await pool.query(query.text, query.values);
+    
+    // Format results and prepare pagination metadata
+    const establishments = result.rows.map(formatEstablishmentResult);
+    
+    // Determine if there are more results (we fetch pageSize + 1 to check)
+    const hasMore = establishments.length > pageSize;
+    if (hasMore) {
+      establishments.pop(); // Remove the extra item
+    }
+
+    // Generate cursor for next page
+    const nextCursor = hasMore && establishments.length > 0
+      ? encodePaginationCursor(establishments[establishments.length - 1])
+      : null;
+
+    return {
+      establishments,
+      pagination: {
+        cursor: nextCursor,
+        has_more: hasMore,
+        page_size: pageSize
+      }
+    };
+  } catch (error) {
+    console.error('Search establishments error:', error);
+    throw new Error('Failed to search establishments');
+  }
+}
+
+/**
+ * Map view search using bounding box
+ * 
+ * Different from list view - no user location constraint, searches within
+ * visible map bounds. Used when users explore areas they're not physically in.
+ * 
+ * @param {Object} options - Map search parameters
+ * @param {Object} options.boundingBox - Map viewport bounds {north, south, east, west}
+ * @param {Object} options.filters - Same filter options as list search
+ * @param {number} options.limit - Maximum results (default: 100)
+ * @returns {Promise<Object>} Simplified establishment data for map markers
+ */
+async function searchByMapBounds(options) {
+  const {
+    boundingBox,
+    filters = {},
+    limit = 100
+  } = options;
+
+  // Validate bounding box
+  if (!boundingBox || !isValidBoundingBox(boundingBox)) {
+    throw new Error('Valid bounding box with north, south, east, west is required');
+  }
+
+  const query = buildMapBoundsQuery(boundingBox, filters, limit);
+
+  try {
+    const result = await pool.query(query.text, query.values);
+    
+    // Return simplified data for map markers (less data for performance)
+    const establishments = result.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      category: row.category,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      average_rating: parseFloat(row.average_rating),
+      subscription_tier: row.subscription_tier
+    }));
+
+    return { establishments };
+  } catch (error) {
+    console.error('Map bounds search error:', error);
+    throw new Error('Failed to search establishments by map bounds');
+  }
+}
+
+/**
+ * Builds the main search SQL query with PostGIS spatial operations
+ * 
+ * This constructs a complex query that:
+ * 1. Uses ST_DWithin for efficient spatial filtering with index
+ * 2. Calculates distance using ST_Distance for accurate meters
+ * 3. Implements three-factor ranking algorithm
+ * 4. Applies all filters with correct AND/OR logic
+ * 5. Handles cursor-based pagination
+ * 
+ * The query is optimized to use spatial indexes and return results in single pass.
+ */
+function buildSearchQuery(userLocation, radiusMeters, filters, cursor, pageSize) {
+  const { lat, lon } = userLocation;
+  const values = [lon, lat, radiusMeters];
+  let paramIndex = 4;
+
+  // Start building the query
+  // ST_MakePoint creates a point from coordinates
+  // ::geography casts to geography type for accurate earth-surface calculations
+  // ST_DWithin checks if within radius (uses spatial index efficiently)
+  let query = `
+    SELECT 
+      e.id,
+      e.name,
+      e.description,
+      e.address,
+      e.category,
+      e.cuisine_type,
+      e.price_range,
+      e.average_check_byn,
+      e.features,
+      e.operating_hours,
+      e.is_24_hours,
+      e.average_rating,
+      e.review_count,
+      e.subscription_tier,
+      e.primary_image_url,
+      -- Calculate distance in meters using PostGIS
+      ST_Distance(
+        e.location::geography,
+        ST_MakePoint($1, $2)::geography
+      ) as distance_meters,
+      -- Calculate three-factor ranking score
+      -- Distance Factor: 100 * (1 - distance/max_radius) weighted at 35%
+      -- Quality Factor: rating component (50 max) + review component (50 max) weighted at 40%
+      -- Subscription Factor: tier bonus weighted at 25%
+      (
+        (100 * (1 - ST_Distance(e.location::geography, ST_MakePoint($1, $2)::geography) / $3) * 0.35) +
+        ((e.average_rating / 5.0 * 50) + (LEAST(e.review_count, 200) / 200.0 * 50)) * 0.40 +
+        (CASE 
+          WHEN e.subscription_tier = 'premium' THEN 50
+          WHEN e.subscription_tier = 'standard' THEN 35
+          WHEN e.subscription_tier = 'basic' THEN 15
+          ELSE 0
+        END) * 0.25
+      ) as ranking_score
+    FROM establishments e
+    WHERE 
+      -- Spatial filter first (uses index for performance)
+      ST_DWithin(
+        e.location::geography,
+        ST_MakePoint($1, $2)::geography,
+        $3
+      )
+  `;
+
+  // Apply category filter (multiple selection with OR logic)
+  if (filters.categories && filters.categories.length > 0) {
+    query += ` AND e.category = ANY($${paramIndex})`;
+    values.push(filters.categories);
+    paramIndex++;
+  }
+
+  // Apply cuisine filter (multiple selection with OR logic)
+  if (filters.cuisines && filters.cuisines.length > 0) {
+    query += ` AND e.cuisine_type && $${paramIndex}`;
+    values.push(filters.cuisines);
+    paramIndex++;
+  }
+
+  // Apply price range filter (multiple selection with OR logic)
+  if (filters.priceRanges && filters.priceRanges.length > 0) {
+    const priceConditions = filters.priceRanges.map(range => {
+      if (range === '$') return 'e.average_check_byn < 20';
+      if (range === '$$') return '(e.average_check_byn >= 20 AND e.average_check_byn < 40)';
+      if (range === '$$$') return 'e.average_check_byn >= 40';
+      return null;
+    }).filter(Boolean);
+    
+    if (priceConditions.length > 0) {
+      query += ` AND (${priceConditions.join(' OR ')})`;
+    }
+  }
+
+  // Apply operating hours filter (single selection)
+  if (filters.hoursFilter) {
+    if (filters.hoursFilter === 'until_22') {
+      // Establishments closing at or after 22:00
+      query += ` AND (e.is_24_hours = true OR e.operating_hours->>'close' >= '22:00')`;
+    } else if (filters.hoursFilter === 'until_morning') {
+      // Establishments closing at or after 02:00
+      query += ` AND (e.is_24_hours = true OR e.operating_hours->>'close' >= '02:00')`;
+    } else if (filters.hoursFilter === '24_hours') {
+      query += ` AND e.is_24_hours = true`;
+    }
+  }
+
+  // Apply feature filters (multiple selection with AND logic)
+  // Each selected feature must be present (all features required)
+  if (filters.features && filters.features.length > 0) {
+    filters.features.forEach(feature => {
+      query += ` AND e.features @> $${paramIndex}`;
+      values.push(JSON.stringify([feature]));
+      paramIndex++;
+    });
+  }
+
+  // Handle cursor-based pagination
+  if (cursor) {
+    try {
+      const cursorData = decodePaginationCursor(cursor);
+      query += ` AND (
+        ranking_score < $${paramIndex}
+        OR (ranking_score = $${paramIndex} AND e.id > $${paramIndex + 1})
+      )`;
+      values.push(cursorData.rankingScore, cursorData.establishmentId);
+      paramIndex += 2;
+    } catch (error) {
+      // Invalid cursor, ignore and start from beginning
+      console.warn('Invalid pagination cursor, starting from first page');
+    }
+  }
+
+  // Order by ranking score (best results first), with ID as tiebreaker
+  query += `
+    ORDER BY ranking_score DESC, e.id ASC
+    LIMIT $${paramIndex}
+  `;
+  values.push(pageSize + 1); // Fetch one extra to determine if more results exist
+
+  return { text: query, values };
+}
+
+/**
+ * Builds SQL query for map bounds search
+ * 
+ * Uses ST_MakeEnvelope to create geographic bounding box from viewport coordinates,
+ * then finds all establishments within that box with filtering applied.
+ */
+function buildMapBoundsQuery(boundingBox, filters, limit) {
+  const { north, south, east, west } = boundingBox;
+  const values = [west, south, east, north];
+  let paramIndex = 5;
+
+  // Create envelope from bounding box and check intersection with establishment locations
+  // SRID 4326 is WGS84 coordinate system (standard GPS coordinates)
+  let query = `
+    SELECT 
+      e.id,
+      e.name,
+      e.category,
+      e.average_rating,
+      e.subscription_tier,
+      -- Extract latitude and longitude for map markers
+      ST_Y(e.location::geometry) as latitude,
+      ST_X(e.location::geometry) as longitude
+    FROM establishments e
+    WHERE 
+      -- Check if establishment location is within map bounds
+      ST_Intersects(
+        e.location::geometry,
+        ST_MakeEnvelope($1, $2, $3, $4, 4326)
+      )
+  `;
+
+  // Apply the same filters as list view (category, cuisine, price, hours, features)
+  if (filters.categories && filters.categories.length > 0) {
+    query += ` AND e.category = ANY($${paramIndex})`;
+    values.push(filters.categories);
+    paramIndex++;
+  }
+
+  if (filters.cuisines && filters.cuisines.length > 0) {
+    query += ` AND e.cuisine_type && $${paramIndex}`;
+    values.push(filters.cuisines);
+    paramIndex++;
+  }
+
+  if (filters.priceRanges && filters.priceRanges.length > 0) {
+    const priceConditions = filters.priceRanges.map(range => {
+      if (range === '$') return 'e.average_check_byn < 20';
+      if (range === '$$') return '(e.average_check_byn >= 20 AND e.average_check_byn < 40)';
+      if (range === '$$$') return 'e.average_check_byn >= 40';
+      return null;
+    }).filter(Boolean);
+    
+    if (priceConditions.length > 0) {
+      query += ` AND (${priceConditions.join(' OR ')})`;
+    }
+  }
+
+  if (filters.hoursFilter) {
+    if (filters.hoursFilter === 'until_22') {
+      query += ` AND (e.is_24_hours = true OR e.operating_hours->>'close' >= '22:00')`;
+    } else if (filters.hoursFilter === 'until_morning') {
+      query += ` AND (e.is_24_hours = true OR e.operating_hours->>'close' >= '02:00')`;
+    } else if (filters.hoursFilter === '24_hours') {
+      query += ` AND e.is_24_hours = true`;
+    }
+  }
+
+  if (filters.features && filters.features.length > 0) {
+    filters.features.forEach(feature => {
+      query += ` AND e.features @> $${paramIndex}`;
+      values.push(JSON.stringify([feature]));
+      paramIndex++;
+    });
+  }
+
+  // For map view, we might sort by rating since distance less relevant
+  query += `
+    ORDER BY e.average_rating DESC, e.review_count DESC
+    LIMIT $${paramIndex}
+  `;
+  values.push(limit);
+
+  return { text: query, values };
+}
+
+/**
+ * Validates bounding box coordinates
+ * Ensures north > south and coordinates are within valid ranges
+ */
+function isValidBoundingBox(bbox) {
+  const { north, south, east, west } = bbox;
+  
+  // Check all coordinates exist and are numbers
+  if (typeof north !== 'number' || typeof south !== 'number' ||
+      typeof east !== 'number' || typeof west !== 'number') {
+    return false;
+  }
+
+  // Check valid latitude range (-90 to 90)
+  if (north < -90 || north > 90 || south < -90 || south > 90) {
+    return false;
+  }
+
+  // Check valid longitude range (-180 to 180)
+  if (east < -180 || east > 180 || west < -180 || west > 180) {
+    return false;
+  }
+
+  // Check logical consistency (north must be greater than south)
+  if (north <= south) {
+    return false;
+  }
+
+  // Check reasonable bounding box size (prevent queries covering entire world)
+  const latDiff = north - south;
+  const lonDiff = Math.abs(east - west);
+  if (latDiff > 10 || lonDiff > 10) {
+    // Bounding box too large (more than ~1000km on a side)
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Formats raw database row into client-friendly establishment object
+ * Converts types, formats numbers, structures nested data
+ */
+function formatEstablishmentResult(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    address: row.address,
+    category: row.category,
+    cuisine_type: row.cuisine_type,
+    price_range: row.price_range,
+    average_check_byn: parseFloat(row.average_check_byn) || null,
+    features: row.features || [],
+    operating_hours: row.operating_hours,
+    is_24_hours: row.is_24_hours,
+    average_rating: parseFloat(row.average_rating) || 0,
+    review_count: parseInt(row.review_count) || 0,
+    subscription_tier: row.subscription_tier,
+    primary_image_url: row.primary_image_url,
+    distance_meters: Math.round(parseFloat(row.distance_meters)),
+    ranking_score: parseFloat(row.ranking_score).toFixed(2)
+  };
+}
+
+/**
+ * Encodes pagination cursor from last establishment in result set
+ * Cursor contains ranking score and ID for stable sorting
+ * 
+ * Using base64 encoding for clean URL-safe cursor strings
+ */
+function encodePaginationCursor(establishment) {
+  const cursorData = {
+    rankingScore: establishment.ranking_score,
+    establishmentId: establishment.id
+  };
+  return Buffer.from(JSON.stringify(cursorData)).toString('base64');
+}
+
+/**
+ * Decodes pagination cursor back into ranking score and ID
+ * Throws error if cursor invalid/malformed
+ */
+function decodePaginationCursor(cursor) {
+  try {
+    const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+    return JSON.parse(decoded);
+  } catch (error) {
+    throw new Error('Invalid pagination cursor');
+  }
+}
+
+/**
+ * Helper function for testing ranking calculation
+ * Can be used to verify algorithm produces expected scores
+ */
+function calculateRankingScore(establishment, userLocation, maxRadius) {
+  const distance = establishment.distance_meters;
+  
+  // Distance factor (0-100, linear falloff)
+  const distanceFactor = 100 * (1 - distance / maxRadius);
+  
+  // Quality factor (0-100)
+  const ratingComponent = (establishment.average_rating / 5.0) * 50;
+  const reviewComponent = (Math.min(establishment.review_count, 200) / 200.0) * 50;
+  const qualityFactor = ratingComponent + reviewComponent;
+  
+  // Subscription factor (0-50)
+  const tierBonus = {
+    premium: 50,
+    standard: 35,
+    basic: 15,
+    free: 0
+  };
+  const subscriptionFactor = tierBonus[establishment.subscription_tier] || 0;
+  
+  // Weighted final score
+  const finalScore = (distanceFactor * 0.35) + (qualityFactor * 0.40) + (subscriptionFactor * 0.25);
+  
+  return {
+    distance_factor: distanceFactor.toFixed(2),
+    quality_factor: qualityFactor.toFixed(2),
+    subscription_factor: subscriptionFactor,
+    final_score: finalScore.toFixed(2)
+  };
+}
+
+export {
+  searchEstablishments,
+  searchByMapBounds,
+  calculateRankingScore
+};
+
