@@ -225,7 +225,7 @@ export const findReviewsByUser = async (userId, options = {}) => {
       r.updated_at,
       e.name as establishment_name,
       e.city as establishment_city,
-      e.category as establishment_category
+      e.categories as establishment_categories
     FROM reviews r
     JOIN establishments e ON r.establishment_id = e.id
     WHERE r.user_id = $1
@@ -546,7 +546,8 @@ export const executeInTransaction = async (callback) => {
 export const establishmentExists = async (establishmentId) => {
   const query = `
     SELECT EXISTS(
-      SELECT 1 FROM establishments WHERE id = $1
+      SELECT 1 FROM establishments
+      WHERE id = $1 AND status = 'active'
     ) as exists
   `;
 
