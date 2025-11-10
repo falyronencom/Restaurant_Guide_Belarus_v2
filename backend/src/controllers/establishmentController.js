@@ -52,7 +52,7 @@ export const createEstablishment = asyncHandler(async (req, res) => {
     endpoint: 'POST /api/v1/partner/establishments',
   });
 
-  // Return 201 Created with the establishment object
+  // Return 201 Created with the full establishment object
   res.status(201).json({
     success: true,
     data: {
