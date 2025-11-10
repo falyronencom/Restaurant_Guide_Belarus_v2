@@ -20,44 +20,23 @@ import { createPartnerAndGetToken, createTestEstablishment } from '../utils/auth
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Mock Cloudinary before importing app
-jest.mock('../../config/cloudinary.js', () => ({
-  uploadImage: jest.fn().mockResolvedValue({
-    public_id: 'test-establishment/interior/test-image-123',
-    url: 'https://res.cloudinary.com/test-cloud/image/upload/v1234567890/test-establishment/interior/test-image-123.jpg',
-  }),
-  deleteImage: jest.fn().mockResolvedValue({ result: 'ok' }),
-  isValidImageType: jest.fn().mockImplementation((mimetype) => {
-    return ['image/jpeg', 'image/png', 'image/webp', 'image/heic'].includes(mimetype);
-  }),
-  isValidImageSize: jest.fn().mockImplementation((size) => {
-    return size <= 10 * 1024 * 1024; // 10MB
-  }),
-  generateAllResolutions: jest.fn().mockImplementation((publicId) => ({
-    url: `https://res.cloudinary.com/test-cloud/image/upload/${publicId}.jpg`,
-    thumbnail_url: `https://res.cloudinary.com/test-cloud/image/upload/w_200,h_200,c_fill/${publicId}.jpg`,
-    preview_url: `https://res.cloudinary.com/test-cloud/image/upload/w_800,h_600,c_fit/${publicId}.jpg`,
-  })),
-  extractPublicIdFromUrl: jest.fn().mockImplementation((url) => {
-    const match = url.match(/upload\/(?:v\d+\/)?(.+)\.\w+$/);
-    return match ? match[1] : null;
-  }),
-}));
-
+// For ES modules, we'll mock Cloudinary functions in beforeAll
+// since jest.mock() doesn't work with ES modules in Node's experimental mode
 let app;
 let pool;
+let cloudinary;
 
 // Setup and teardown
 beforeAll(async () => {
-  // Import app after mocking Cloudinary
+  // Import app
   const appModule = await import('../../server.js');
   app = appModule.default || appModule.app;
-  pool = getPool();
+  const poolModule = await import('../../config/database.js');
+  pool = poolModule.default;
 });
 
 beforeEach(async () => {
   await clearAllData();
-  jest.clearAllMocks();
 });
 
 afterAll(async () => {

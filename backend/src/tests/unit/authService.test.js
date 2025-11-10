@@ -13,10 +13,13 @@
 import { jest } from '@jest/globals';
 
 // Mock dependencies BEFORE importing service
-jest.unstable_mockModule('../config/database.js', () => ({
-  pool: {
-    query: jest.fn(),
-  },
+const mockPool = {
+  query: jest.fn(),
+};
+
+jest.unstable_mockModule('../../config/database.js', () => ({
+  pool: mockPool,
+  default: mockPool,
 }));
 
 jest.unstable_mockModule('argon2', () => ({
@@ -27,12 +30,12 @@ jest.unstable_mockModule('argon2', () => ({
   },
 }));
 
-jest.unstable_mockModule('../utils/jwt.js', () => ({
+jest.unstable_mockModule('../../utils/jwt.js', () => ({
   generateAccessToken: jest.fn(),
   generateRefreshToken: jest.fn(),
 }));
 
-jest.unstable_mockModule('../utils/logger.js', () => ({
+jest.unstable_mockModule('../../utils/logger.js', () => ({
   default: {
     info: jest.fn(),
     warn: jest.fn(),
@@ -41,10 +44,10 @@ jest.unstable_mockModule('../utils/logger.js', () => ({
 }));
 
 // Import after mocking
-const { pool } = await import('../config/database.js');
+const { pool } = await import('../../config/database.js');
 const argon2 = (await import('argon2')).default;
-const { generateAccessToken, generateRefreshToken } = await import('../utils/jwt.js');
-const logger = (await import('../utils/logger.js')).default;
+const { generateAccessToken, generateRefreshToken } = await import('../../utils/jwt.js');
+const logger = (await import('../../utils/logger.js')).default;
 
 const {
   createUser,
