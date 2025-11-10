@@ -56,13 +56,9 @@ export const createEstablishment = asyncHandler(async (req, res) => {
   res.status(201).json({
     success: true,
     data: {
-      id: establishment.id,
-      partner_id: establishment.partner_id,
-      name: establishment.name,
-      status: establishment.status,
-      created_at: establishment.created_at,
-      message: 'Establishment created successfully in draft status',
+      establishment,
     },
+    message: 'Establishment created successfully in draft status',
   });
 });
 
@@ -135,7 +131,9 @@ export const getEstablishmentDetails = asyncHandler(async (req, res) => {
   // Return complete establishment object
   res.status(200).json({
     success: true,
-    data: establishment,
+    data: {
+      establishment,
+    },
   });
 });
 
@@ -179,13 +177,9 @@ export const updateEstablishment = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     data: {
-      id: updatedEstablishment.id,
-      partner_id: updatedEstablishment.partner_id,
-      name: updatedEstablishment.name,
-      status: updatedEstablishment.status,
-      updated_at: updatedEstablishment.updated_at,
-      message: 'Establishment updated successfully',
+      establishment: updatedEstablishment,
     },
+    message: 'Establishment updated successfully',
   });
 });
 
