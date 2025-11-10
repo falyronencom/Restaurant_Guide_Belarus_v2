@@ -117,13 +117,15 @@ export const errorHandler = (err, req, res, next) => {
   const sanitizedResponse = {
     success: false,
     message,
-    error_code: errorCode,
+    error: {
+      code: errorCode
+    },
     timestamp: new Date().toISOString(),
   };
 
   // Include validation details if available and appropriate
-  if (details && statusCode === 400 && err.isOperational) {
-    sanitizedResponse.details = details;
+  if (details && (statusCode === 400 || statusCode === 422) && err.isOperational) {
+    sanitizedResponse.error.details = details;
   }
 
   // In development, include stack trace for debugging
@@ -206,11 +208,13 @@ export const validate = (req, res, next) => {
       correlationId: req.correlationId,
     });
 
-    return res.status(400).json({
+    return res.status(422).json({
       success: false,
       message: 'Validation failed',
-      error_code: 'VALIDATION_ERROR',
-      errors: formattedErrors,
+      error: {
+        code: 'VALIDATION_ERROR',
+        details: formattedErrors
+      },
       timestamp: new Date().toISOString(),
     });
   }
@@ -239,7 +243,9 @@ export const notFoundHandler = (req, res) => {
   res.status(404).json({
     success: false,
     message: `Route ${req.method} ${req.path} not found`,
-    error_code: 'NOT_FOUND',
+    error: {
+      code: 'NOT_FOUND'
+    },
     timestamp: new Date().toISOString(),
   });
 };

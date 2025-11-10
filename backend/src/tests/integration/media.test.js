@@ -14,7 +14,7 @@
 import request from 'supertest';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { clearAllData, getPool } from '../utils/database.js';
+import { clearAllData } from '../utils/database.js';
 import { createPartnerAndGetToken, createTestEstablishment } from '../utils/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
