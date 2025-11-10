@@ -25,7 +25,9 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         message: 'No authorization token provided',
-        error_code: 'MISSING_TOKEN',
+        error: {
+          code: 'MISSING_TOKEN'
+        },
         timestamp: new Date().toISOString(),
       });
     }
@@ -36,7 +38,9 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json({
         success: false,
         message: 'Invalid authorization header format. Expected: Bearer <token>',
-        error_code: 'INVALID_TOKEN_FORMAT',
+        error: {
+          code: 'INVALID_TOKEN_FORMAT'
+        },
         timestamp: new Date().toISOString(),
       });
     }
@@ -77,7 +81,9 @@ export const authenticate = async (req, res, next) => {
     return res.status(401).json({
       success: false,
       message,
-      error_code: errorCode,
+      error: {
+        code: errorCode
+      },
       timestamp: new Date().toISOString(),
     });
   }
@@ -120,7 +126,9 @@ export const authorize = (allowedRoles) => {
       return res.status(500).json({
         success: false,
         message: 'Internal server error: authorization misconfigured',
-        error_code: 'AUTH_MISCONFIGURATION',
+        error: {
+          code: 'AUTH_MISCONFIGURATION'
+        },
         timestamp: new Date().toISOString(),
       });
     }
@@ -136,12 +144,14 @@ export const authorize = (allowedRoles) => {
       return res.status(403).json({
         success: false,
         message: 'Insufficient permissions to access this resource',
-        error_code: 'FORBIDDEN',
-        timestamp: new Date().toISOString(),
-        details: {
-          required_roles: allowedRoles,
-          your_role: req.user.role,
+        error: {
+          code: 'FORBIDDEN',
+          details: {
+            required_roles: allowedRoles,
+            your_role: req.user.role,
+          }
         },
+        timestamp: new Date().toISOString(),
       });
     }
 

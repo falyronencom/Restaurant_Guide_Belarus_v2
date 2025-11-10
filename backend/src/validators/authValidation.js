@@ -137,10 +137,9 @@ export const validateRegister = [
     .matches(/[0-9]/)
     .withMessage('Password must contain at least one digit'),
   
-  // Auth method validation
+  // Auth method validation (optional, will be auto-detected if not provided)
   body('authMethod')
-    .notEmpty()
-    .withMessage('Authentication method is required')
+    .optional()
     .isIn(['email', 'phone', 'google', 'yandex'])
     .withMessage('Authentication method must be: email, phone, google, or yandex'),
   

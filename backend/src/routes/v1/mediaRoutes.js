@@ -248,7 +248,9 @@ router.use((error, req, res, next) => {
       return res.status(413).json({
         success: false,
         message: 'File size exceeds 10MB limit',
-        error_code: 'FILE_TOO_LARGE',
+        error: {
+          code: 'FILE_TOO_LARGE'
+        },
       });
     }
     
@@ -256,7 +258,9 @@ router.use((error, req, res, next) => {
       return res.status(400).json({
         success: false,
         message: 'Unexpected field in file upload',
-        error_code: 'INVALID_UPLOAD_FIELD',
+        error: {
+          code: 'INVALID_UPLOAD_FIELD'
+        },
       });
     }
 
@@ -264,7 +268,9 @@ router.use((error, req, res, next) => {
     return res.status(400).json({
       success: false,
       message: error.message,
-      error_code: 'UPLOAD_ERROR',
+      error: {
+        code: 'UPLOAD_ERROR'
+      },
     });
   }
 
@@ -273,7 +279,9 @@ router.use((error, req, res, next) => {
     return res.status(422).json({
       success: false,
       message: error.message,
-      error_code: 'INVALID_FILE_TYPE',
+      error: {
+        code: 'INVALID_FILE_TYPE'
+      },
     });
   }
 

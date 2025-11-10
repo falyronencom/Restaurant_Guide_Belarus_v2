@@ -50,7 +50,9 @@ export const uploadMedia = asyncHandler(async (req, res) => {
     return res.status(400).json({
       success: false,
       message: 'No file uploaded',
-      error_code: 'FILE_REQUIRED',
+      error: {
+        code: 'FILE_REQUIRED'
+      },
     });
   }
 

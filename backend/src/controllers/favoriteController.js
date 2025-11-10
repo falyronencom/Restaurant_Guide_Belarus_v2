@@ -144,7 +144,9 @@ export const getUserFavorites = asyncHandler(async (req, res) => {
     return res.status(400).json({
       success: false,
       message: 'Page and limit must be positive integers',
-      error_code: 'INVALID_PAGINATION',
+      error: {
+        code: 'INVALID_PAGINATION'
+      },
     });
   }
 
@@ -250,7 +252,9 @@ export const checkBatchFavoriteStatus = asyncHandler(async (req, res) => {
     return res.status(400).json({
       success: false,
       message: 'establishment_ids must be an array',
-      error_code: 'INVALID_INPUT',
+      error: {
+        code: 'INVALID_INPUT'
+      },
     });
   }
 
