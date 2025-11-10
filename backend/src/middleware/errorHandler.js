@@ -11,10 +11,10 @@ import { validationResult } from 'express-validator';
  * throw new AppError('User not found', 404, 'USER_NOT_FOUND');
  */
 export class AppError extends Error {
-  constructor(message, statusCode = 500, errorCode = 'INTERNAL_ERROR', details = null) {
+  constructor(message, statusCode = 500, code = 'INTERNAL_ERROR', details = null) {
     super(message);
     this.statusCode = statusCode;
-    this.errorCode = errorCode;
+    this.code = code;
     this.details = details;
     this.isOperational = true; // Marks this as an expected error we can safely report to client
     Error.captureStackTrace(this, this.constructor);
@@ -46,7 +46,7 @@ export class AppError extends Error {
 export const errorHandler = (err, req, res, next) => {
   // Default to 500 Internal Server Error if status not specified
   let statusCode = err.statusCode || 500;
-  let errorCode = err.errorCode || 'INTERNAL_ERROR';
+  let errorCode = err.code || 'INTERNAL_ERROR';
   let message = err.message || 'An unexpected error occurred';
   let details = err.details || null;
 
