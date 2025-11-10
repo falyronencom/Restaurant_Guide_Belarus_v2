@@ -43,8 +43,8 @@ export async function registerUser(userData) {
 
   return {
     user: response.body.data.user,
-    accessToken: response.body.data.tokens.accessToken,
-    refreshToken: response.body.data.tokens.refreshToken,
+    accessToken: response.body.data.accessToken,
+    refreshToken: response.body.data.refreshToken,
     response
   };
 }
@@ -59,8 +59,8 @@ export async function loginUser(credentials) {
 
   return {
     user: response.body.data.user,
-    accessToken: response.body.data.tokens.accessToken,
-    refreshToken: response.body.data.tokens.refreshToken,
+    accessToken: response.body.data.accessToken,
+    refreshToken: response.body.data.refreshToken,
     response
   };
 }

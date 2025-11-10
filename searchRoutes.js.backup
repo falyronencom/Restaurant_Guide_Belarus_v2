@@ -1,0 +1,200 @@
+/**
+ * Search Routes - API Endpoint Definitions
+ * 
+ * This module defines all search-related API endpoints and wires them together
+ * with appropriate middleware (validation, authentication, rate limiting).
+ * 
+ * Endpoints:
+ * - GET /health - Search system health check
+ * - GET /establishments - List view search (radius-based, near user location)
+ * - GET /map - Map view search (bounds-based, explore anywhere)
+ * 
+ * All routes follow REST conventions and API specification v2.0
+ */
+
+import express from 'express';
+import * as searchController from '../../controllers/searchController.js';
+import {
+  validateListSearch,
+  validateMapSearch,
+  handleValidationErrors
+} from '../../validators/searchValidation.js';
+
+const router = express.Router();
+
+// Optional authentication middleware with lazy loading
+// Search works for both authenticated and unauthenticated users
+let authMiddlewareCache = null;
+const authenticate = async (req, res, next) => {
+  if (!authMiddlewareCache) {
+    try {
+      const authModule = await import('../../middleware/auth.js');
+      authMiddlewareCache = authModule.authenticate;
+    } catch (error) {
+      // Auth middleware not available, use fallback
+      authMiddlewareCache = (req, res, next) => {
+        // Extract token if present but don't require it
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          req.token = authHeader.substring(7);
+        }
+        next();
+      };
+    }
+  }
+  return authMiddlewareCache(req, res, next);
+};
+
+// Optional rate limiting middleware with lazy loading
+let rateLimiterCache = null;
+const rateLimiter = async (req, res, next) => {
+  if (!rateLimiterCache) {
+    try {
+      const limiterModule = await import('../../middleware/rateLimiter.js');
+      rateLimiterCache = limiterModule.createRateLimiter({
+        windowMs: 60 * 1000, // 1 minute window
+        max: 100, // 100 requests per minute per IP
+        message: 'Too many search requests, please try again later'
+      });
+    } catch (error) {
+      // Rate limiter not available, use no-op
+      rateLimiterCache = (req, res, next) => next();
+    }
+  }
+  return rateLimiterCache(req, res, next);
+};
+
+/**
+ * GET /api/v1/search/health
+ * 
+ * Health check endpoint for search system
+ * Verifies database connectivity and PostGIS availability
+ * 
+ * Response: 200 OK if operational, 503 Service Unavailable otherwise
+ */
+router.get('/health', searchController.healthCheck);
+
+/**
+ * GET /api/v1/search/establishments
+ * 
+ * List view search endpoint - find establishments near user's current location
+ * 
+ * Query Parameters:
+ * - lat (required): User latitude (-90 to 90)
+ * - lon (required): User longitude (-180 to 180)
+ * - radius (optional): Search radius in meters (100 to 50000, default 3000)
+ * - category (optional): Comma-separated establishment categories
+ * - cuisine (optional): Comma-separated cuisine types
+ * - price_range (optional): Comma-separated price ranges ($, $$, $$$)
+ * - features (optional): Comma-separated required features
+ * - hours_filter (optional): Operating hours filter (until_22, until_morning, 24_hours)
+ * - cursor (optional): Pagination cursor for next page
+ * - page_size (optional): Results per page (1 to 100, default 20)
+ * 
+ * Response: 200 OK with establishments array and pagination metadata
+ * 
+ * Example request:
+ * GET /api/v1/search/establishments?lat=53.9006&lon=27.5590&radius=5000&category=Ресторан,Кофейня&cuisine=Итальянская&price_range=$,$$ &features=wifi,parking&page_size=20
+ * 
+ * Example response:
+ * {
+ *   "success": true,
+ *   "data": {
+ *     "establishments": [...],
+ *     "pagination": {
+ *       "cursor": "eyJyYW5raW5nU2NvcmUiOjg1LjUsImVzdGFibGlzaG1lbnRJZCI6MTJ9",
+ *       "has_more": true,
+ *       "page_size": 20
+ *     },
+ *     "search_params": {
+ *       "location": {"lat": 53.9006, "lon": 27.5590},
+ *       "radius_meters": 5000,
+ *       "filters_applied": 4
+ *     }
+ *   }
+ * }
+ * 
+ * Middleware chain:
+ * 1. Validation - Checks all parameters are valid
+ * 2. Error handling - Returns 422 if validation fails
+ * 3. Optional authentication - Extracts user if authenticated
+ * 4. Rate limiting - Prevents abuse
+ * 5. Controller - Processes request and returns results
+ */
+router.get(
+  '/establishments',
+  validateListSearch,
+  handleValidationErrors,
+  authenticate,
+  rateLimiter,
+  searchController.listSearch
+);
+
+/**
+ * GET /api/v1/search/map
+ * 
+ * Map view search endpoint - find establishments within map viewport bounds
+ * 
+ * Query Parameters:
+ * - north (required): Northern boundary latitude (-90 to 90)
+ * - south (required): Southern boundary latitude (-90 to 90, must be < north)
+ * - east (required): Eastern boundary longitude (-180 to 180)
+ * - west (required): Western boundary longitude (-180 to 180)
+ * - category, cuisine, price_range, features, hours_filter (optional): Same as list view
+ * - limit (optional): Maximum results (1 to 500, default 100)
+ * 
+ * Response: 200 OK with simplified establishments array for map markers
+ * 
+ * Example request:
+ * GET /api/v1/search/map?north=53.95&south=53.85&east=27.65&west=27.45&category=Ресторан&limit=100
+ * 
+ * Example response:
+ * {
+ *   "success": true,
+ *   "data": {
+ *     "establishments": [
+ *       {
+ *         "id": 42,
+ *         "name": "Bella Italia",
+ *         "category": "Ресторан",
+ *         "latitude": 53.9006,
+ *         "longitude": 27.5590,
+ *         "average_rating": 4.5,
+ *         "subscription_tier": "premium"
+ *       },
+ *       ...
+ *     ],
+ *     "result_count": 87,
+ *     "bounds": {
+ *       "north": 53.95,
+ *       "south": 53.85,
+ *       "east": 27.65,
+ *       "west": 27.45
+ *     },
+ *     "filters_applied": 1
+ *   }
+ * }
+ * 
+ * Middleware chain: Same as establishments endpoint
+ */
+router.get(
+  '/map',
+  validateMapSearch,
+  handleValidationErrors,
+  authenticate,
+  rateLimiter,
+  searchController.mapSearch
+);
+
+/**
+ * Future endpoints (out of MVP scope):
+ * 
+ * - GET /search/autocomplete - Text-based search suggestions
+ * - GET /search/recent - User's recent searches (requires auth)
+ * - POST /search/save - Save search configuration (requires auth)
+ * - GET /search/saved - Get saved searches (requires auth)
+ * - DELETE /search/saved/:id - Delete saved search (requires auth)
+ */
+
+export default router;
+

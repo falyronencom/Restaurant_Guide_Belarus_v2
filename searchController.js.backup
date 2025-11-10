@@ -1,0 +1,371 @@
+/**
+ * Search Controller - HTTP Request Handlers
+ * 
+ * This controller handles incoming HTTP requests for establishment search,
+ * validates parameters, orchestrates service calls, and formats responses.
+ * 
+ * Endpoints:
+ * - GET /api/v1/search/establishments - List view search (radius-based)
+ * - GET /api/v1/search/map - Map view search (bounds-based)
+ * 
+ * Both endpoints support comprehensive filtering and return properly formatted
+ * JSON responses following API specification v2.0
+ */
+
+import * as searchService from '../services/searchService.js';
+
+/**
+ * List view search endpoint handler
+ * 
+ * Primary search endpoint for finding establishments near user's current location
+ * with radius filtering and intelligent ranking. Supports infinite scroll through
+ * cursor-based pagination.
+ * 
+ * Query Parameters:
+ * - lat (required): User latitude
+ * - lon (required): User longitude
+ * - radius (optional): Search radius in meters, default 3000
+ * - category (optional): Comma-separated establishment categories
+ * - cuisine (optional): Comma-separated cuisine types
+ * - price_range (optional): Comma-separated price ranges ($, $$, $$$)
+ * - features (optional): Comma-separated required features
+ * - hours_filter (optional): Operating hours filter (until_22, until_morning, 24_hours)
+ * - cursor (optional): Pagination cursor for next page
+ * - page_size (optional): Results per page, default 20
+ * 
+ * Response: 200 OK with establishments array and pagination metadata
+ */
+async function listSearch(req, res) {
+  try {
+    // Extract and validate coordinates (already validated by middleware)
+    const userLocation = {
+      lat: parseFloat(req.query.lat),
+      lon: parseFloat(req.query.lon)
+    };
+
+    // Parse radius with default
+    const radiusMeters = req.query.radius 
+      ? parseInt(req.query.radius) 
+      : 3000;
+
+    // Parse filters from query parameters
+    const filters = parseFilters(req.query);
+
+    // Parse pagination parameters
+    const paginationCursor = req.query.cursor || null;
+    const pageSize = req.query.page_size 
+      ? Math.min(parseInt(req.query.page_size), 100) // Cap at 100
+      : 20;
+
+    // Call search service
+    const result = await searchService.searchEstablishments({
+      userLocation,
+      radiusMeters,
+      filters,
+      paginationCursor,
+      pageSize
+    });
+
+    // Return successful response
+    res.status(200).json({
+      success: true,
+      data: {
+        establishments: result.establishments,
+        pagination: result.pagination,
+        search_params: {
+          location: userLocation,
+          radius_meters: radiusMeters,
+          filters_applied: getAppliedFiltersCount(filters)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('List search error:', error);
+    
+    // Differentiate between user errors and server errors
+    if (error.message.includes('Valid user location') || 
+        error.message.includes('Invalid pagination cursor')) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_PARAMETERS',
+          message: error.message
+        }
+      });
+    }
+
+    // Generic server error
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'SEARCH_FAILED',
+        message: 'Failed to perform search. Please try again.'
+      }
+    });
+  }
+}
+
+/**
+ * Map view search endpoint handler
+ * 
+ * Specialized search for map exploration mode where user can view establishments
+ * in any geographic area, not constrained to their current location. Returns
+ * simplified data optimized for map marker display.
+ * 
+ * Query Parameters:
+ * - north (required): Northern boundary latitude
+ * - south (required): Southern boundary latitude
+ * - east (required): Eastern boundary longitude
+ * - west (required): Western boundary longitude
+ * - category, cuisine, price_range, features, hours_filter (optional): Same as list view
+ * - limit (optional): Maximum results, default 100
+ * 
+ * Response: 200 OK with simplified establishments array
+ */
+async function mapSearch(req, res) {
+  try {
+    // Extract and validate bounding box (already validated by middleware)
+    const boundingBox = {
+      north: parseFloat(req.query.north),
+      south: parseFloat(req.query.south),
+      east: parseFloat(req.query.east),
+      west: parseFloat(req.query.west)
+    };
+
+    // Parse filters (same as list view)
+    const filters = parseFilters(req.query);
+
+    // Parse limit with default and maximum cap
+    const limit = req.query.limit 
+      ? Math.min(parseInt(req.query.limit), 500) // Cap at 500 for performance
+      : 100;
+
+    // Call map search service
+    const result = await searchService.searchByMapBounds({
+      boundingBox,
+      filters,
+      limit
+    });
+
+    // Return successful response
+    res.status(200).json({
+      success: true,
+      data: {
+        establishments: result.establishments,
+        result_count: result.establishments.length,
+        bounds: boundingBox,
+        filters_applied: getAppliedFiltersCount(filters)
+      }
+    });
+
+  } catch (error) {
+    console.error('Map search error:', error);
+    
+    // Differentiate between user errors and server errors
+    if (error.message.includes('Valid bounding box')) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_BOUNDING_BOX',
+          message: error.message
+        }
+      });
+    }
+
+    // Generic server error
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'MAP_SEARCH_FAILED',
+        message: 'Failed to search map area. Please try again.'
+      }
+    });
+  }
+}
+
+/**
+ * Parses filter parameters from query string
+ * 
+ * Handles comma-separated values for multi-select filters and converts
+ * them into arrays. Validates filter values against allowed options.
+ * 
+ * @param {Object} query - Express request query object
+ * @returns {Object} Parsed and validated filters
+ */
+function parseFilters(query) {
+  const filters = {};
+
+  // Parse category filter (multiple selection)
+  if (query.category) {
+    const categories = query.category.split(',').map(c => c.trim());
+    filters.categories = validateCategories(categories);
+  }
+
+  // Parse cuisine filter (multiple selection)
+  if (query.cuisine) {
+    const cuisines = query.cuisine.split(',').map(c => c.trim());
+    filters.cuisines = validateCuisines(cuisines);
+  }
+
+  // Parse price range filter (multiple selection)
+  if (query.price_range) {
+    const priceRanges = query.price_range.split(',').map(p => p.trim());
+    filters.priceRanges = validatePriceRanges(priceRanges);
+  }
+
+  // Parse features filter (multiple selection)
+  if (query.features) {
+    const features = query.features.split(',').map(f => f.trim());
+    filters.features = validateFeatures(features);
+  }
+
+  // Parse operating hours filter (single selection)
+  if (query.hours_filter) {
+    filters.hoursFilter = validateHoursFilter(query.hours_filter);
+  }
+
+  return filters;
+}
+
+/**
+ * Valid establishment categories matching database schema
+ */
+const VALID_CATEGORIES = [
+  'Ресторан',
+  'Кофейня',
+  'Фаст-фуд',
+  'Бар',
+  'Кондитерская',
+  'Пиццерия',
+  'Пекарня',
+  'Паб',
+  'Столовая',
+  'Кальянная',
+  'Боулинг',
+  'Караоке',
+  'Бильярд'
+];
+
+/**
+ * Valid cuisine types matching database schema
+ */
+const VALID_CUISINES = [
+  'Народная',
+  'Авторская',
+  'Азиатская',
+  'Американская',
+  'Вегетарианская',
+  'Японская',
+  'Грузинская',
+  'Итальянская',
+  'Смешанная',
+  'Континентальная'
+];
+
+/**
+ * Valid feature names matching database schema
+ */
+const VALID_FEATURES = [
+  'delivery',
+  'wifi',
+  'banquet',
+  'terrace',
+  'smoking_area',
+  'kids_zone',
+  'pet_friendly',
+  'parking'
+];
+
+/**
+ * Valid operating hours filter options
+ */
+const VALID_HOURS_FILTERS = ['until_22', 'until_morning', '24_hours'];
+
+/**
+ * Validates category selections
+ * Filters out invalid values and returns only valid categories
+ */
+function validateCategories(categories) {
+  return categories.filter(category => VALID_CATEGORIES.includes(category));
+}
+
+/**
+ * Validates cuisine type selections
+ * Filters out invalid values and returns only valid cuisines
+ */
+function validateCuisines(cuisines) {
+  return cuisines.filter(cuisine => VALID_CUISINES.includes(cuisine));
+}
+
+/**
+ * Validates price range selections
+ * Accepts only $, $$, $$$
+ */
+function validatePriceRanges(priceRanges) {
+  const valid = ['$', '$$', '$$$'];
+  return priceRanges.filter(range => valid.includes(range));
+}
+
+/**
+ * Validates feature selections
+ * Filters out invalid feature names
+ */
+function validateFeatures(features) {
+  return features.filter(feature => VALID_FEATURES.includes(feature));
+}
+
+/**
+ * Validates hours filter selection
+ * Returns filter if valid, null otherwise
+ */
+function validateHoursFilter(hoursFilter) {
+  return VALID_HOURS_FILTERS.includes(hoursFilter) ? hoursFilter : null;
+}
+
+/**
+ * Counts how many filter categories are actively applied
+ * Used for response metadata and debugging
+ */
+function getAppliedFiltersCount(filters) {
+  let count = 0;
+  if (filters.categories && filters.categories.length > 0) count++;
+  if (filters.cuisines && filters.cuisines.length > 0) count++;
+  if (filters.priceRanges && filters.priceRanges.length > 0) count++;
+  if (filters.features && filters.features.length > 0) count++;
+  if (filters.hoursFilter) count++;
+  return count;
+}
+
+/**
+ * Health check endpoint for search system
+ * Can be used to verify search infrastructure is operational
+ */
+async function healthCheck(req, res) {
+  try {
+    // Simple test query to verify database connectivity and PostGIS availability
+    const { pool } = await import('../config/database.js');
+    await pool.query('SELECT PostGIS_Version()');
+    
+    res.status(200).json({
+      success: true,
+      service: 'search',
+      status: 'operational',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(503).json({
+      success: false,
+      service: 'search',
+      status: 'unavailable',
+      error: 'Database or PostGIS not accessible'
+    });
+  }
+}
+
+export {
+  listSearch,
+  mapSearch,
+  healthCheck
+};
+

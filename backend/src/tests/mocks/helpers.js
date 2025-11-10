@@ -5,6 +5,7 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { jest } from '@jest/globals';
 
 /**
  * Generate mock user data

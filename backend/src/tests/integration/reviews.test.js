@@ -28,6 +28,17 @@ let user2Id;
 let partnerId;
 let establishmentId;
 
+// Default working hours for test establishments
+const defaultWorkingHours = JSON.stringify({
+  monday: { open: '10:00', close: '22:00' },
+  tuesday: { open: '10:00', close: '22:00' },
+  wednesday: { open: '10:00', close: '22:00' },
+  thursday: { open: '10:00', close: '22:00' },
+  friday: { open: '10:00', close: '23:00' },
+  saturday: { open: '11:00', close: '23:00' },
+  sunday: { open: '11:00', close: '22:00' }
+});
+
 beforeAll(async () => {
   // Create test users
   const user = await createUserAndGetTokens(testUsers.regularUser);
@@ -48,20 +59,30 @@ beforeEach(async () => {
   await query('TRUNCATE TABLE establishments CASCADE');
 
   // Create test establishment
+  const defaultWorkingHours = JSON.stringify({
+    monday: { open: '10:00', close: '22:00' },
+    tuesday: { open: '10:00', close: '22:00' },
+    wednesday: { open: '10:00', close: '22:00' },
+    thursday: { open: '10:00', close: '22:00' },
+    friday: { open: '10:00', close: '23:00' },
+    saturday: { open: '11:00', close: '23:00' },
+    sunday: { open: '11:00', close: '22:00' }
+  });
+
   const result = await query(`
     INSERT INTO establishments (
       id, partner_id, name, description, city, address,
       latitude, longitude, categories, cuisines, status,
-      average_rating, review_count, created_at, updated_at
+      average_rating, review_count, working_hours, price_range, created_at, updated_at
     )
     VALUES (
       gen_random_uuid(), $1, 'Test Restaurant', 'Great food',
       'Минск', 'Test Address', 53.9, 27.5,
       ARRAY['Ресторан'], ARRAY['Европейская'], 'active',
-      NULL, 0, NOW(), NOW()
+      NULL, 0, $2::jsonb, '$$', NOW(), NOW()
     )
     RETURNING id
-  `, [partnerId]);
+  `, [partnerId, defaultWorkingHours]);
 
   establishmentId = result.rows[0].id;
 });
@@ -294,10 +315,10 @@ describe('Reviews System - One Review Per User Per Establishment', () => {
   test('should allow same user to review different establishments', async () => {
     // Create second establishment
     const result = await query(`
-      INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, status, created_at, updated_at)
-      VALUES (gen_random_uuid(), $1, 'Second Restaurant', 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Ресторан'], ARRAY['Европейская'], 'active', NOW(), NOW())
+      INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, status, working_hours, price_range, average_rating, review_count, created_at, updated_at)
+      VALUES (gen_random_uuid(), $1, 'Second Restaurant', 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Ресторан'], ARRAY['Европейская'], 'active', $2::jsonb, '$$', NULL, 0, NOW(), NOW())
       RETURNING id
-    `, [partnerId]);
+    `, [partnerId, defaultWorkingHours]);
     const establishment2Id = result.rows[0].id;
 
     // Review first establishment

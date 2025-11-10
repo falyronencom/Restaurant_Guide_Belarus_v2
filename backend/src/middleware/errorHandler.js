@@ -76,7 +76,7 @@ export const errorHandler = (err, req, res, next) => {
   // Handle specific error types with custom logic
   if (err.name === 'ValidationError') {
     // Express-validator validation errors
-    statusCode = 400;
+    statusCode = 422; // 422 Unprocessable Entity is the correct code for validation errors
     errorCode = 'VALIDATION_ERROR';
     message = 'Request validation failed';
     details = err.details || err.array?.(); // Include validation failure details

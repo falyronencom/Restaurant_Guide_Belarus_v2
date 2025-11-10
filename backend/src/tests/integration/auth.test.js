@@ -16,16 +16,12 @@ import { clearAllData } from '../utils/database.js';
 import { createTestUser, getUserByEmail, getUserByPhone } from '../utils/auth.js';
 import { testUsers, invalidUsers, edgeCaseUsers } from '../fixtures/users.js';
 import jwt from 'jsonwebtoken';
-
-// Import app without starting server
-// We'll need to create this export in server.js
-let app;
+import app from '../../server.js';
 
 // Setup and teardown
 beforeAll(async () => {
-  // TODO: Import app from server.js
-  // For now, we'll skip this and note it as a requirement
-  console.log('⚠️  Need to export app from server.js for testing');
+  // Clear all test data before running auth tests
+  await clearAllData();
 });
 
 beforeEach(async () => {

@@ -269,6 +269,77 @@ export async function createStandardTestUsers() {
   return { regular, partner, admin };
 }
 
+/**
+ * Create a partner user and get token (alias for media tests)
+ * 
+ * @returns {Promise<Object>} { partner, token }
+ */
+export async function createPartnerAndGetToken() {
+  const partner = await createUserAndGetTokens({
+    email: `partner-${Date.now()}@test.com`,
+    phone: `+37529${Math.floor(1000000 + Math.random() * 9000000)}`,
+    password: 'Partner123!@#',
+    name: 'Test Partner',
+    role: 'partner'
+  });
+
+  return {
+    partner: partner.user,
+    token: partner.accessToken
+  };
+}
+
+/**
+ * Create a test establishment
+ * 
+ * @param {string} partnerId - Partner user ID
+ * @returns {Promise<Object>} Created establishment
+ */
+export async function createTestEstablishment(partnerId) {
+  const establishmentId = randomUUID();
+  
+  const query = `
+    INSERT INTO establishments (
+      id, partner_id, name, description, city, address,
+      latitude, longitude, categories, cuisines, price_range,
+      working_hours, status, created_at, updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    RETURNING *
+  `;
+
+  const workingHours = JSON.stringify({
+    monday: { open: '10:00', close: '22:00' },
+    tuesday: { open: '10:00', close: '22:00' },
+    wednesday: { open: '10:00', close: '22:00' },
+    thursday: { open: '10:00', close: '22:00' },
+    friday: { open: '10:00', close: '23:00' },
+    saturday: { open: '11:00', close: '23:00' },
+    sunday: { open: '11:00', close: '22:00' }
+  });
+
+  const values = [
+    establishmentId,
+    partnerId,
+    'Test Restaurant',
+    'Test Description',
+    'Минск',
+    'Test Address',
+    53.9,
+    27.5,
+    ['Ресторан'],
+    ['Европейская'],
+    '$$',
+    workingHours,
+    'active',
+    new Date(),
+    new Date()
+  ];
+
+  const result = await pool.query(query, values);
+  return result.rows[0];
+}
+
 export default {
   createTestUser,
   createUserAndGetTokens,
@@ -282,5 +353,7 @@ export default {
   invalidateUserTokens,
   verifyPassword,
   createAuthHeader,
-  createStandardTestUsers
+  createStandardTestUsers,
+  createPartnerAndGetToken,
+  createTestEstablishment
 };

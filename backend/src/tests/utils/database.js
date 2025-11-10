@@ -185,14 +185,24 @@ export async function seedMinimalData() {
     role: 'partner'
   });
 
-  // Create test establishment
+  // Create test establishment with working_hours
+  const defaultWorkingHours = JSON.stringify({
+    monday: { open: '10:00', close: '22:00' },
+    tuesday: { open: '10:00', close: '22:00' },
+    wednesday: { open: '10:00', close: '22:00' },
+    thursday: { open: '10:00', close: '22:00' },
+    friday: { open: '10:00', close: '23:00' },
+    saturday: { open: '11:00', close: '23:00' },
+    sunday: { open: '11:00', close: '22:00' }
+  });
+
   const establishmentQuery = `
     INSERT INTO establishments (
       id, partner_id, name, description, city, address, latitude, longitude,
-      categories, cuisines, price_range, status, created_at, updated_at
+      categories, cuisines, price_range, working_hours, status, created_at, updated_at
     )
     VALUES (
-      gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW()
+      gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, NOW(), NOW()
     )
     RETURNING *
   `;
@@ -208,6 +218,7 @@ export async function seedMinimalData() {
     ['Ресторан'],
     ['Европейская'],
     '$$',
+    defaultWorkingHours,
     'active'
   ];
 
@@ -215,6 +226,23 @@ export async function seedMinimalData() {
   const establishment = establishmentResult.rows[0];
 
   return { user, partner, establishment };
+}
+
+/**
+ * Get default working hours for test establishments
+ * 
+ * @returns {string} JSON string of working hours
+ */
+export function getDefaultWorkingHours() {
+  return JSON.stringify({
+    monday: { open: '10:00', close: '22:00' },
+    tuesday: { open: '10:00', close: '22:00' },
+    wednesday: { open: '10:00', close: '22:00' },
+    thursday: { open: '10:00', close: '22:00' },
+    friday: { open: '10:00', close: '23:00' },
+    saturday: { open: '11:00', close: '23:00' },
+    sunday: { open: '11:00', close: '22:00' }
+  });
 }
 
 /**
@@ -316,5 +344,6 @@ export default {
   resetSequences,
   beginTransaction,
   commitTransaction,
-  rollbackTransaction
+  rollbackTransaction,
+  getDefaultWorkingHours
 };

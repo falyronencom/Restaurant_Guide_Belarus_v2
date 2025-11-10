@@ -14,7 +14,7 @@
 
 import request from 'supertest';
 import app from '../../server.js';
-import { clearAllData, query } from '../utils/database.js';
+import { clearAllData, query, getDefaultWorkingHours } from '../utils/database.js';
 import { createUserAndGetTokens } from '../utils/auth.js';
 import { testUsers } from '../fixtures/users.js';
 
@@ -45,26 +45,36 @@ beforeEach(async () => {
   await query('TRUNCATE TABLE favorites CASCADE');
   await query('TRUNCATE TABLE establishments CASCADE');
 
-  // Create test establishments
+  // Create test establishments with required fields including working_hours
+  const defaultWorkingHours = JSON.stringify({
+    monday: { open: '10:00', close: '22:00' },
+    tuesday: { open: '10:00', close: '22:00' },
+    wednesday: { open: '10:00', close: '22:00' },
+    thursday: { open: '10:00', close: '22:00' },
+    friday: { open: '10:00', close: '23:00' },
+    saturday: { open: '11:00', close: '23:00' },
+    sunday: { open: '11:00', close: '22:00' }
+  });
+
   const est1 = await query(`
-    INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, status, created_at, updated_at)
-    VALUES (gen_random_uuid(), $1, 'Restaurant 1', 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Ресторан'], ARRAY['Европейская'], 'active', NOW(), NOW())
+    INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, working_hours, status, created_at, updated_at)
+    VALUES (gen_random_uuid(), $1, 'Restaurant 1', 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Ресторан'], ARRAY['Европейская'], $2::jsonb, 'active', NOW(), NOW())
     RETURNING id
-  `, [partnerId]);
+  `, [partnerId, defaultWorkingHours]);
   establishment1Id = est1.rows[0].id;
 
   const est2 = await query(`
-    INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, status, created_at, updated_at)
-    VALUES (gen_random_uuid(), $1, 'Restaurant 2', 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Кофейня'], ARRAY['Европейская'], 'active', NOW(), NOW())
+    INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, working_hours, status, created_at, updated_at)
+    VALUES (gen_random_uuid(), $1, 'Restaurant 2', 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Кофейня'], ARRAY['Европейская'], $2::jsonb, 'active', NOW(), NOW())
     RETURNING id
-  `, [partnerId]);
+  `, [partnerId, defaultWorkingHours]);
   establishment2Id = est2.rows[0].id;
 
   const est3 = await query(`
-    INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, status, created_at, updated_at)
-    VALUES (gen_random_uuid(), $1, 'Restaurant 3', 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Бар'], ARRAY['Американская'], 'active', NOW(), NOW())
+    INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, working_hours, status, created_at, updated_at)
+    VALUES (gen_random_uuid(), $1, 'Restaurant 3', 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Бар'], ARRAY['Американская'], $2::jsonb, 'active', NOW(), NOW())
     RETURNING id
-  `, [partnerId]);
+  `, [partnerId, defaultWorkingHours]);
   establishment3Id = est3.rows[0].id;
 });
 
@@ -238,12 +248,13 @@ describe('Favorites System - List Favorites', () => {
 
   test('should paginate favorites', async () => {
     // Add more favorites
+    const workingHours = getDefaultWorkingHours();
     for (let i = 0; i < 15; i++) {
       const est = await query(`
-        INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, status, created_at, updated_at)
-        VALUES (gen_random_uuid(), $1, $2, 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Ресторан'], ARRAY['Европейская'], 'active', NOW(), NOW())
+        INSERT INTO establishments (id, partner_id, name, description, city, address, latitude, longitude, categories, cuisines, working_hours, status, created_at, updated_at)
+        VALUES (gen_random_uuid(), $1, $2, 'Test', 'Минск', 'Test', 53.9, 27.5, ARRAY['Ресторан'], ARRAY['Европейская'], $3::jsonb, 'active', NOW(), NOW())
         RETURNING id
-      `, [partnerId, `Restaurant ${i}`]);
+      `, [partnerId, `Restaurant ${i}`, workingHours]);
 
       await request(app)
         .post('/api/v1/favorites')
