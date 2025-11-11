@@ -337,7 +337,7 @@ export const establishmentExists = async (establishmentId) => {
     SELECT EXISTS(
       SELECT 1 
       FROM establishments 
-      WHERE id = $1 AND status = 'active'
+      WHERE id = $1 AND status != 'archived'
     ) as exists
   `;
 
