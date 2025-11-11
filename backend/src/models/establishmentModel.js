@@ -140,7 +140,7 @@ export const createEstablishment = async (establishmentData) => {
     categories,
     cuisines,
     price_range,
-    JSON.stringify(working_hours), // Convert object to JSONB
+    working_hours ? JSON.stringify(working_hours) : JSON.stringify({}), // Convert object to JSONB, default to empty object
     special_hours ? JSON.stringify(special_hours) : null,
     attributes ? JSON.stringify(attributes) : '{}',
   ];

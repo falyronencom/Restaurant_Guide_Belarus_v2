@@ -127,14 +127,16 @@ export const rateLimiter = async (req, res, next) => {
       return res.status(429).json({
         success: false,
         message: 'Rate limit exceeded. Please try again later.',
-        error_code: 'RATE_LIMIT_EXCEEDED',
-        timestamp: new Date().toISOString(),
-        details: {
-          limit,
-          window: isAuthenticated ? '1 minute' : '1 hour',
-          retry_after: ttl,
-          reset_at: new Date(resetTime * 1000).toISOString(),
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          details: {
+            limit,
+            window: isAuthenticated ? '1 minute' : '1 hour',
+            retry_after: ttl,
+            reset_at: new Date(resetTime * 1000).toISOString(),
+          }
         },
+        timestamp: new Date().toISOString(),
       });
     }
 
@@ -208,14 +210,16 @@ export const createRateLimiter = ({ limit, windowSeconds, keyPrefix = 'custom' }
         return res.status(429).json({
           success: false,
           message: 'Rate limit exceeded for this endpoint. Please try again later.',
-          error_code: 'RATE_LIMIT_EXCEEDED',
-          timestamp: new Date().toISOString(),
-          details: {
-            limit,
-            window: `${windowSeconds} seconds`,
-            retry_after: ttl,
-            reset_at: new Date(resetTime * 1000).toISOString(),
+          error: {
+            code: 'RATE_LIMIT_EXCEEDED',
+            details: {
+              limit,
+              window: `${windowSeconds} seconds`,
+              retry_after: ttl,
+              reset_at: new Date(resetTime * 1000).toISOString(),
+            }
           },
+          timestamp: new Date().toISOString(),
         });
       }
 

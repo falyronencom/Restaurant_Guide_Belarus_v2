@@ -42,19 +42,19 @@ import logger from '../utils/logger.js';
  */
 export const addFavorite = asyncHandler(async (req, res) => {
   // Extract establishment ID from request body
-  const { establishment_id } = req.body;
+  const { establishmentId } = req.body;
 
   // Get authenticated user ID from JWT token (set by authenticate middleware)
   // CRITICAL: Never trust user_id from request body - always use authenticated context
   const userId = req.user.userId;
 
   // Call service layer to add favorite with business logic
-  const result = await FavoriteService.addToFavorites(userId, establishment_id);
+  const result = await FavoriteService.addToFavorites(userId, establishmentId);
 
   // Log successful favorite creation for monitoring
   logger.info('Favorite added via API', {
     userId,
-    establishmentId: establishment_id,
+    establishmentId: establishmentId,
     endpoint: 'POST /api/v1/favorites',
   });
 
@@ -144,7 +144,9 @@ export const getUserFavorites = asyncHandler(async (req, res) => {
     return res.status(400).json({
       success: false,
       message: 'Page and limit must be positive integers',
-      error_code: 'INVALID_PAGINATION',
+      error: {
+        code: 'INVALID_PAGINATION'
+      },
     });
   }
 
@@ -250,7 +252,9 @@ export const checkBatchFavoriteStatus = asyncHandler(async (req, res) => {
     return res.status(400).json({
       success: false,
       message: 'establishment_ids must be an array',
-      error_code: 'INVALID_INPUT',
+      error: {
+        code: 'INVALID_INPUT'
+      },
     });
   }
 

@@ -40,7 +40,7 @@ import logger from '../utils/logger.js';
  */
 export async function register(req, res, next) {
   try {
-    const { email, phone, password, name, authMethod } = req.body;
+    let { email, phone, password, name, authMethod } = req.body;
     
     // Validate that at least email or phone is provided
     if (!email && !phone) {
@@ -51,6 +51,18 @@ export async function register(req, res, next) {
           message: 'Either email or phone must be provided'
         }
       });
+    }
+    
+    // Auto-detect authMethod if not provided
+    if (!authMethod) {
+      if (email && !phone) {
+        authMethod = 'email';
+      } else if (phone && !email) {
+        authMethod = 'phone';
+      } else if (email && phone) {
+        // Both provided, default to email
+        authMethod = 'email';
+      }
     }
     
     // Validate auth method matches provided credentials

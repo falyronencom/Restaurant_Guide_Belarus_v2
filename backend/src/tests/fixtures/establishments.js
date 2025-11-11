@@ -24,8 +24,8 @@ export const testEstablishments = [
     website: 'https://vasilki.by',
     categories: ['Ресторан'],
     cuisines: ['Народная'],
-    priceRange: '$$$',
-    workingHours: {
+    price_range: '$$$',
+    working_hours: {
       monday: { open: '10:00', close: '23:00' },
       tuesday: { open: '10:00', close: '23:00' },
       wednesday: { open: '10:00', close: '23:00' },
@@ -49,8 +49,8 @@ export const testEstablishments = [
     website: 'https://gambrinus.by',
     categories: ['Ресторан', 'Бар'],
     cuisines: ['Европейская'],
-    priceRange: '$$',
-    workingHours: {
+    price_range: '$$',
+    working_hours: {
       monday: { open: '12:00', close: '02:00' },
       tuesday: { open: '12:00', close: '02:00' },
       wednesday: { open: '12:00', close: '02:00' },
@@ -74,8 +74,8 @@ export const testEstablishments = [
     website: 'https://lascala.by',
     categories: ['Ресторан', 'Пиццерия'],
     cuisines: ['Итальянская'],
-    priceRange: '$$$',
-    workingHours: {
+    price_range: '$$$',
+    working_hours: {
       monday: { open: '11:00', close: '23:00' },
       tuesday: { open: '11:00', close: '23:00' },
       wednesday: { open: '11:00', close: '23:00' },
@@ -99,8 +99,8 @@ export const testEstablishments = [
     website: null,
     categories: ['Ресторан'],
     cuisines: ['Японская', 'Азиатская'],
-    priceRange: '$$$$',
-    workingHours: {
+    price_range: '$$$$',
+    working_hours: {
       monday: { open: '12:00', close: '23:00' },
       tuesday: { open: '12:00', close: '23:00' },
       wednesday: { open: '12:00', close: '23:00' },
@@ -124,8 +124,8 @@ export const testEstablishments = [
     website: 'https://coffeetime.by',
     categories: ['Кофейня'],
     cuisines: ['Европейская'],
-    priceRange: '$',
-    workingHours: {
+    price_range: '$',
+    working_hours: {
       monday: { open: '08:00', close: '22:00' },
       tuesday: { open: '08:00', close: '22:00' },
       wednesday: { open: '08:00', close: '22:00' },
@@ -149,8 +149,8 @@ export const testEstablishments = [
     website: null,
     categories: ['Ресторан'],
     cuisines: ['Грузинская'],
-    priceRange: '$$',
-    workingHours: {
+    price_range: '$$',
+    working_hours: {
       monday: { open: '11:00', close: '23:00' },
       tuesday: { open: '11:00', close: '23:00' },
       wednesday: { open: '11:00', close: '23:00' },
@@ -174,8 +174,8 @@ export const testEstablishments = [
     website: 'https://burgerbrothers.by',
     categories: ['Фаст-фуд'],
     cuisines: ['Американская'],
-    priceRange: '$',
-    workingHours: {
+    price_range: '$',
+    working_hours: {
       monday: { open: '10:00', close: '23:00' },
       tuesday: { open: '10:00', close: '23:00' },
       wednesday: { open: '10:00', close: '23:00' },
@@ -199,8 +199,8 @@ export const testEstablishments = [
     website: null,
     categories: ['Ресторан'],
     cuisines: ['Народная', 'Европейская'],
-    priceRange: '$$',
-    workingHours: {
+    price_range: '$$',
+    working_hours: {
       monday: { open: '10:00', close: '23:00' },
       tuesday: { open: '10:00', close: '23:00' },
       wednesday: { open: '10:00', close: '23:00' },
@@ -307,7 +307,7 @@ export const minimalEstablishment = {
   longitude: 27.5,
   categories: ['Кофейня'],
   cuisines: ['Европейская']
-  // No phone, email, website, workingHours - all optional
+  // No phone, email, website, working_hours - all optional
 };
 
 export default {

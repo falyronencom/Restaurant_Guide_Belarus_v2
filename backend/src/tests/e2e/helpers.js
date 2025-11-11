@@ -42,9 +42,9 @@ export async function registerUser(userData) {
     .send(userData);
 
   return {
-    user: response.body.data.user,
-    accessToken: response.body.data.accessToken,
-    refreshToken: response.body.data.refreshToken,
+    user: response.body.data?.user,
+    accessToken: response.body.data?.accessToken,
+    refreshToken: response.body.data?.refreshToken,
     response
   };
 }
@@ -58,9 +58,9 @@ export async function loginUser(credentials) {
     .send(credentials);
 
   return {
-    user: response.body.data.user,
-    accessToken: response.body.data.accessToken,
-    refreshToken: response.body.data.refreshToken,
+    user: response.body.data?.user,
+    accessToken: response.body.data?.accessToken,
+    refreshToken: response.body.data?.refreshToken,
     response
   };
 }

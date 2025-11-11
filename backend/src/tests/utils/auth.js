@@ -82,7 +82,7 @@ export async function createUserAndGetTokens(userData) {
 
   // Generate tokens
   const accessToken = generateAccessToken({
-    id: user.id,
+    userId: user.id,
     email: user.email,
     phone: user.phone,
     role: user.role
@@ -108,7 +108,7 @@ export async function createUserAndGetTokens(userData) {
  */
 export function generateTestAccessToken(user) {
   return generateAccessToken({
-    id: user.id,
+    userId: user.id,
     email: user.email,
     phone: user.phone,
     role: user.role

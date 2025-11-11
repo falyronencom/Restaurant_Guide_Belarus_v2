@@ -214,7 +214,7 @@ export const getUserFavorites = async (userId, options = {}) => {
       e.latitude as establishment_latitude,
       e.longitude as establishment_longitude,
       e.categories as establishment_categories,
-      e.cuisine_type as establishment_cuisines,
+      e.cuisines as establishment_cuisines,
       e.price_range as establishment_price_range,
       e.average_rating as establishment_average_rating,
       e.review_count as establishment_review_count,
@@ -337,7 +337,7 @@ export const establishmentExists = async (establishmentId) => {
     SELECT EXISTS(
       SELECT 1 
       FROM establishments 
-      WHERE id = $1 AND status = 'active'
+      WHERE id = $1 AND status != 'archived'
     ) as exists
   `;
 
