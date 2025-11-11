@@ -32,7 +32,7 @@ import logger from '../utils/logger.js';
  */
 export const createReview = asyncHandler(async (req, res) => {
   // Extract review data from request body
-  const { establishment_id, rating, content } = req.body;
+  const { establishmentId, rating, content } = req.body;
 
   // Get authenticated user ID from JWT token (set by authenticate middleware)
   // Never trust user_id from request body - always use authenticated context
@@ -41,7 +41,7 @@ export const createReview = asyncHandler(async (req, res) => {
   // Call service layer to create review with business logic
   const review = await ReviewService.createReview({
     user_id,
-    establishment_id,
+    establishment_id: establishmentId,
     rating,
     content,
   });
@@ -50,7 +50,7 @@ export const createReview = asyncHandler(async (req, res) => {
   logger.info('Review created via API', {
     reviewId: review.id,
     userId: user_id,
-    establishmentId: establishment_id,
+    establishmentId: establishmentId,
     endpoint: 'POST /api/v1/reviews',
   });
 

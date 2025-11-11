@@ -98,8 +98,10 @@ export const listPartnerEstablishments = asyncHandler(async (req, res) => {
   // Return establishments with pagination metadata
   res.status(200).json({
     success: true,
-    data: result.establishments,
-    meta: result.meta,
+    data: {
+      establishments: result.establishments,
+      pagination: result.meta,
+    },
   });
 });
 

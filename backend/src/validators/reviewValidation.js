@@ -25,7 +25,7 @@ import { body, param, query } from 'express-validator';
  * The user_id comes from authenticated context, not request body, so we don't validate it here.
  */
 export const validateCreateReview = [
-  body('establishment_id')
+  body('establishmentId')
     .trim()
     .notEmpty()
     .withMessage('Establishment ID is required')

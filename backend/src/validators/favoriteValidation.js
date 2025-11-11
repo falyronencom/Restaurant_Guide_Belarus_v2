@@ -36,7 +36,7 @@ import { body, param, query } from 'express-validator';
  * because we need to verify the establishment exists and is active.
  */
 export const validateAddFavorite = [
-  body('establishment_id')
+  body('establishmentId')
     .trim()
     .notEmpty()
     .withMessage('Establishment ID is required')
