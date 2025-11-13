@@ -32,33 +32,34 @@ export async function searchByRadius({
   priceRange = null,
   minRating = null,
   limit = 20,
-  offset = 0
+  offset = 0,
+  page = 1
 }) {
-  // Validate coordinates
-  if (!latitude || !longitude) {
-    throw new AppError('Latitude and longitude are required', 400, 'MISSING_COORDINATES');
+  // Validate coordinates (use strict null check to allow 0 values)
+  if (latitude == null || longitude == null) {
+    throw new AppError('Latitude and longitude are required', 422, 'VALIDATION_ERROR');
   }
 
   if (latitude < -90 || latitude > 90) {
-    throw new AppError('Latitude must be between -90 and 90', 400, 'INVALID_LATITUDE');
+    throw new AppError('Latitude must be between -90 and 90', 422, 'VALIDATION_ERROR');
   }
 
   if (longitude < -180 || longitude > 180) {
-    throw new AppError('Longitude must be between -180 and 180', 400, 'INVALID_LONGITUDE');
+    throw new AppError('Longitude must be between -180 and 180', 422, 'VALIDATION_ERROR');
   }
 
   // Validate radius
   if (radius <= 0 || radius > 1000) {
-    throw new AppError('Radius must be between 0 and 1000 km', 400, 'INVALID_RADIUS');
+    throw new AppError('Radius must be between 0 and 1000 km', 422, 'VALIDATION_ERROR');
   }
 
   // Validate pagination
   if (limit < 1 || limit > 100) {
-    throw new AppError('Limit must be between 1 and 100', 400, 'INVALID_LIMIT');
+    throw new AppError('Limit must be between 1 and 100', 422, 'VALIDATION_ERROR');
   }
 
   if (offset < 0) {
-    throw new AppError('Offset must be non-negative', 400, 'INVALID_OFFSET');
+    throw new AppError('Offset must be non-negative', 422, 'VALIDATION_ERROR');
   }
 
   // Build dynamic query
@@ -139,13 +140,26 @@ export async function searchByRadius({
   const countResult = await pool.query(countQuery, countParams);
   const total = parseInt(countResult.rows[0].total);
 
+  // Calculate page-based pagination metadata
+  const totalPages = Math.ceil(total / limit);
+  const hasNext = page < totalPages;
+  const hasPrevious = page > 1;
+
+  // Transform results to include 'distance' field (in addition to distance_km for backward compatibility)
+  const establishments = result.rows.map(row => ({
+    ...row,
+    distance: row.distance_km // Add 'distance' field that tests expect
+  }));
+
   return {
-    establishments: result.rows,
+    establishments,
     pagination: {
-      total,
+      page,
       limit,
-      offset,
-      hasMore: offset + limit < total
+      total,
+      totalPages,
+      hasNext,
+      hasPrevious
     }
   };
 }
@@ -176,22 +190,22 @@ export async function searchByBounds({
   minRating = null,
   limit = 100
 }) {
-  // Validate bounds
-  if (!minLat || !maxLat || !minLon || !maxLon) {
-    throw new AppError('All bounds parameters are required (minLat, maxLat, minLon, maxLon)', 400, 'MISSING_BOUNDS');
+  // Validate bounds (use strict null check to allow 0 values)
+  if (minLat == null || maxLat == null || minLon == null || maxLon == null) {
+    throw new AppError('All bounds parameters are required (minLat, maxLat, minLon, maxLon)', 422, 'VALIDATION_ERROR');
   }
 
   if (minLat >= maxLat) {
-    throw new AppError('minLat must be less than maxLat', 400, 'INVALID_BOUNDS');
+    throw new AppError('minLat must be less than maxLat', 422, 'VALIDATION_ERROR');
   }
 
   if (minLon >= maxLon) {
-    throw new AppError('minLon must be less than maxLon', 400, 'INVALID_BOUNDS');
+    throw new AppError('minLon must be less than maxLon', 422, 'VALIDATION_ERROR');
   }
 
   // Validate limit
   if (limit < 1 || limit > 500) {
-    throw new AppError('Limit must be between 1 and 500 for bounds search', 400, 'INVALID_LIMIT');
+    throw new AppError('Limit must be between 1 and 500 for bounds search', 422, 'VALIDATION_ERROR');
   }
 
   // Build dynamic query

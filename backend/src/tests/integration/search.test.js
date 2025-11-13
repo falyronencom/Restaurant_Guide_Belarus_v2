@@ -44,8 +44,8 @@ beforeEach(async () => {
   await clearAllData();
   // Create partner for establishments
   await query(
-    'INSERT INTO users (id, email, password_hash, name, role) VALUES ($1, $2, $3, $4, $5)',
-    [partnerId, 'partner@test.com', 'hash', 'Partner', 'partner']
+    'INSERT INTO users (id, email, password_hash, name, role, auth_method) VALUES ($1, $2, $3, $4, $5, $6)',
+    [partnerId, 'partner@test.com', 'hash', 'Partner', 'partner', 'email']
   );
 });
 

@@ -33,6 +33,7 @@ export async function searchEstablishments(req, res, next) {
       priceRange,
       minRating,
       limit,
+      page,
       offset
     } = req.query;
 
@@ -41,37 +42,56 @@ export async function searchEstablishments(req, res, next) {
     const lon = parseFloat(longitude);
 
     if (isNaN(lat) || isNaN(lon)) {
-      throw new AppError('Invalid latitude or longitude', 400, 'INVALID_COORDINATES');
+      throw new AppError('Invalid latitude or longitude', 422, 'VALIDATION_ERROR');
     }
 
     // Parse radius (optional)
     const radiusKm = radius ? parseFloat(radius) : 10;
     if (isNaN(radiusKm)) {
-      throw new AppError('Invalid radius', 400, 'INVALID_RADIUS');
+      throw new AppError('Invalid radius', 422, 'VALIDATION_ERROR');
     }
 
-    // Parse categories (optional, comma-separated)
+    // Parse categories (optional, comma-separated or array)
     const categoryList = categories
-      ? categories.split(',').map(c => c.trim()).filter(Boolean)
+      ? (Array.isArray(categories) ? categories : categories.split(',')).map(c => c.trim()).filter(Boolean)
       : null;
 
-    // Parse cuisines (optional, comma-separated)
+    // Parse cuisines (optional, comma-separated or array)
     const cuisineList = cuisines
-      ? cuisines.split(',').map(c => c.trim()).filter(Boolean)
+      ? (Array.isArray(cuisines) ? cuisines : cuisines.split(',')).map(c => c.trim()).filter(Boolean)
       : null;
 
     // Parse minRating (optional)
     const minRatingValue = minRating ? parseFloat(minRating) : null;
     if (minRatingValue && (isNaN(minRatingValue) || minRatingValue < 1 || minRatingValue > 5)) {
-      throw new AppError('minRating must be between 1 and 5', 400, 'INVALID_RATING');
+      throw new AppError('minRating must be between 1 and 5', 422, 'VALIDATION_ERROR');
     }
 
-    // Parse pagination (optional)
+    // Parse pagination (support both page and offset)
     const limitValue = limit ? parseInt(limit, 10) : 20;
-    const offsetValue = offset ? parseInt(offset, 10) : 0;
+    const pageValue = page ? parseInt(page, 10) : null;
+    const offsetValue = offset ? parseInt(offset, 10) : null;
 
-    if (isNaN(limitValue) || isNaN(offsetValue)) {
-      throw new AppError('Invalid pagination parameters', 400, 'INVALID_PAGINATION');
+    // Calculate offset from page if page is provided
+    let finalOffset = 0;
+    let finalPage = 1;
+
+    if (pageValue) {
+      if (isNaN(pageValue) || pageValue < 1) {
+        throw new AppError('Page must be a positive integer', 422, 'VALIDATION_ERROR');
+      }
+      finalPage = pageValue;
+      finalOffset = (pageValue - 1) * limitValue;
+    } else if (offsetValue !== null) {
+      if (isNaN(offsetValue) || offsetValue < 0) {
+        throw new AppError('Offset must be non-negative', 422, 'VALIDATION_ERROR');
+      }
+      finalOffset = offsetValue;
+      finalPage = Math.floor(offsetValue / limitValue) + 1;
+    }
+
+    if (isNaN(limitValue) || limitValue < 1) {
+      throw new AppError('Invalid limit parameter', 422, 'VALIDATION_ERROR');
     }
 
     // Execute search
@@ -84,7 +104,8 @@ export async function searchEstablishments(req, res, next) {
       priceRange,
       minRating: minRatingValue,
       limit: limitValue,
-      offset: offsetValue
+      offset: finalOffset,
+      page: finalPage
     });
 
     res.status(200).json({
@@ -118,6 +139,10 @@ export async function searchMap(req, res, next) {
       maxLat,
       minLon,
       maxLon,
+      neLat,  // Northeast latitude (alias for maxLat)
+      neLon,  // Northeast longitude (alias for maxLon)
+      swLat,  // Southwest latitude (alias for minLat)
+      swLon,  // Southwest longitude (alias for minLon)
       categories,
       cuisines,
       priceRange,
@@ -125,35 +150,35 @@ export async function searchMap(req, res, next) {
       limit
     } = req.query;
 
-    // Parse bounds
+    // Parse bounds (support both ne/sw and min/max formats)
     const bounds = {
-      minLat: parseFloat(minLat),
-      maxLat: parseFloat(maxLat),
-      minLon: parseFloat(minLon),
-      maxLon: parseFloat(maxLon)
+      minLat: parseFloat(swLat || minLat),
+      maxLat: parseFloat(neLat || maxLat),
+      minLon: parseFloat(swLon || minLon),
+      maxLon: parseFloat(neLon || maxLon)
     };
 
     if (Object.values(bounds).some(isNaN)) {
-      throw new AppError('Invalid bounds coordinates', 400, 'INVALID_BOUNDS');
+      throw new AppError('Invalid bounds coordinates', 422, 'VALIDATION_ERROR');
     }
 
     // Parse filters (same as radius search)
     const categoryList = categories
-      ? categories.split(',').map(c => c.trim()).filter(Boolean)
+      ? (Array.isArray(categories) ? categories : categories.split(',')).map(c => c.trim()).filter(Boolean)
       : null;
 
     const cuisineList = cuisines
-      ? cuisines.split(',').map(c => c.trim()).filter(Boolean)
+      ? (Array.isArray(cuisines) ? cuisines : cuisines.split(',')).map(c => c.trim()).filter(Boolean)
       : null;
 
     const minRatingValue = minRating ? parseFloat(minRating) : null;
     if (minRatingValue && (isNaN(minRatingValue) || minRatingValue < 1 || minRatingValue > 5)) {
-      throw new AppError('minRating must be between 1 and 5', 400, 'INVALID_RATING');
+      throw new AppError('minRating must be between 1 and 5', 422, 'VALIDATION_ERROR');
     }
 
     const limitValue = limit ? parseInt(limit, 10) : 100;
     if (isNaN(limitValue)) {
-      throw new AppError('Invalid limit parameter', 400, 'INVALID_LIMIT');
+      throw new AppError('Invalid limit parameter', 422, 'VALIDATION_ERROR');
     }
 
     // Execute bounds search
