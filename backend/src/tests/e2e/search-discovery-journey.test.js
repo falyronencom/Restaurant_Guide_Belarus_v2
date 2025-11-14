@@ -51,8 +51,17 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
         longitude: 27.5,
         categories: ['Ресторан'],
         cuisines: ['Европейская'],
-        priceRange: '$$$',
-        phone: '+375171111111'
+        price_range: '$$$',
+        phone: '+375291111111',
+        working_hours: {
+          monday: '09:00-22:00',
+          tuesday: '09:00-22:00',
+          wednesday: '09:00-22:00',
+          thursday: '09:00-22:00',
+          friday: '09:00-23:00',
+          saturday: '10:00-23:00',
+          sunday: '10:00-22:00'
+        }
       },
       {
         name: 'Уютная Кофейня',
@@ -63,8 +72,17 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
         longitude: 27.48,
         categories: ['Кофейня'],
         cuisines: ['Европейская'],
-        priceRange: '$',
-        phone: '+375172222222'
+        price_range: '$',
+        phone: '+375292222222',
+        working_hours: {
+          monday: '08:00-20:00',
+          tuesday: '08:00-20:00',
+          wednesday: '08:00-20:00',
+          thursday: '08:00-20:00',
+          friday: '08:00-21:00',
+          saturday: '09:00-21:00',
+          sunday: '09:00-20:00'
+        }
       },
       {
         name: 'Народная Харчевня',
@@ -75,8 +93,17 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
         longitude: 27.52,
         categories: ['Ресторан'],
         cuisines: ['Народная'],
-        priceRange: '$$',
-        phone: '+375173333333'
+        price_range: '$$',
+        phone: '+375293333333',
+        working_hours: {
+          monday: '10:00-21:00',
+          tuesday: '10:00-21:00',
+          wednesday: '10:00-21:00',
+          thursday: '10:00-21:00',
+          friday: '10:00-22:00',
+          saturday: '11:00-22:00',
+          sunday: '11:00-21:00'
+        }
       },
       {
         name: 'Пиццерия Италия',
@@ -87,8 +114,17 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
         longitude: 27.49,
         categories: ['Пиццерия'],
         cuisines: ['Итальянская'],
-        priceRange: '$$',
-        phone: '+375174444444'
+        price_range: '$$',
+        phone: '+375294444444',
+        working_hours: {
+          monday: '11:00-23:00',
+          tuesday: '11:00-23:00',
+          wednesday: '11:00-23:00',
+          thursday: '11:00-23:00',
+          friday: '11:00-00:00',
+          saturday: '12:00-00:00',
+          sunday: '12:00-23:00'
+        }
       }
     ];
 

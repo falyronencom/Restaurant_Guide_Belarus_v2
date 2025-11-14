@@ -72,10 +72,10 @@ describe('E2E Journey: Partner Establishment Management', () => {
         longitude: 27.5615,
         categories: ['Ресторан'],
         cuisines: ['Народная'],
-        priceRange: '$$',
-        phone: '+375173334455',
+        price_range: '$$',
+        phone: '+375293334455',
         website: 'https://zolotaya-korona.by',
-        workingHours: {
+        working_hours: {
           monday: '09:00-22:00',
           tuesday: '09:00-22:00',
           wednesday: '09:00-22:00',

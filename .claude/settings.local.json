@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test:*)",
+      "Bash($env:NODE_ENV=\"test\")",
+      "Bash(node --experimental-vm-modules node_modules/jest/bin/jest.js:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(set NODE_ENV=test)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

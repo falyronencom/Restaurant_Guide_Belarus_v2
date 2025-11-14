@@ -27,7 +27,7 @@
 
 import request from 'supertest';
 import app from '../../server.js';
-import { clearAllData } from '../utils/database.js';
+import { clearAllData, query } from '../utils/database.js';
 
 /**
  * E2E Test Helpers
@@ -35,11 +35,51 @@ import { clearAllData } from '../utils/database.js';
 
 /**
  * Create user and get authentication tokens
+ *
+ * IMPORTANT: For E2E tests, this helper supports setting custom roles (partner, admin)
+ * by directly updating the database after registration. This is necessary because
+ * the public registration API always creates users with 'user' role for security.
+ *
+ * In production, roles are elevated through separate admin processes, but for E2E
+ * tests we need the ability to test partner and admin journeys.
  */
 export async function registerUser(userData) {
   const response = await request(app)
     .post('/api/v1/auth/register')
     .send(userData);
+
+  // If registration succeeded and a custom role was requested
+  if (response.status === 201 && userData.role && userData.role !== 'user') {
+    const userId = response.body.data?.user?.id;
+
+    if (userId) {
+      // Update role directly in database (test environment only)
+      await query(
+        'UPDATE users SET role = $1 WHERE id = $2',
+        [userData.role, userId]
+      );
+
+      // Re-login to get fresh tokens with correct role
+      const loginResponse = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: userData.email || null,
+          phone: userData.phone || null,
+          password: userData.password
+        });
+
+      // Return login response but preserve 201 status from registration
+      return {
+        user: loginResponse.body.data?.user,
+        accessToken: loginResponse.body.data?.accessToken,
+        refreshToken: loginResponse.body.data?.refreshToken,
+        response: {
+          ...loginResponse,
+          status: 201  // Preserve registration status for test expectations
+        }
+      };
+    }
+  }
 
   return {
     user: response.body.data?.user,
@@ -74,6 +114,8 @@ export async function createEstablishment(token, establishmentData) {
     .set('Authorization', `Bearer ${token}`)
     .send(establishmentData);
 
+  // E2E Helper creates establishment via POST /api/v1/partner/establishments
+  // Expected response structure: {success: true, data: {establishment: {...}}}
   return {
     establishment: response.body.data.establishment,
     response
