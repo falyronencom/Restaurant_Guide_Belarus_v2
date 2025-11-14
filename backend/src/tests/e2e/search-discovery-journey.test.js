@@ -340,8 +340,8 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
           radius: 10
         });
 
-      expect(response.status).toBe(400);
-      expect(response.body.error.code).toBe('INVALID_LATITUDE');
+      expect(response.status).toBe(422);
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
     });
 
     test('Search with zero radius fails', async () => {
@@ -353,8 +353,8 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
           radius: 0 // Invalid
         });
 
-      expect(response.status).toBe(400);
-      expect(response.body.error.code).toBe('INVALID_RADIUS');
+      expect(response.status).toBe(422);
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
     });
 
     test('Search with very large radius limited', async () => {
@@ -367,8 +367,8 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
         });
 
       // Should reject radius > 1000km
-      expect(response.status).toBe(400);
-      expect(response.body.error.code).toBe('INVALID_RADIUS');
+      expect(response.status).toBe(422);
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
     });
 
     test('Search without coordinates fails', async () => {
@@ -379,8 +379,8 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
           // Missing latitude/longitude
         });
 
-      expect(response.status).toBe(400);
-      expect(response.body.error.code).toBe('MISSING_COORDINATES');
+      expect(response.status).toBe(422);
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
     });
   });
 

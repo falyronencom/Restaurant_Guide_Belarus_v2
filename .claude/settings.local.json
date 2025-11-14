@@ -6,7 +6,8 @@
       "Bash(node --experimental-vm-modules node_modules/jest/bin/jest.js:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(set NODE_ENV=test)"
+      "Bash(set NODE_ENV=test)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
