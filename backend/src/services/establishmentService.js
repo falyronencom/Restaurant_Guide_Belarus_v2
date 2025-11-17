@@ -352,7 +352,13 @@ export const getEstablishmentById = async (establishmentId, partnerId) => {
       );
     }
 
-    return establishment;
+    // Convert numeric types from PostgreSQL strings to numbers
+    return {
+      ...establishment,
+      latitude: establishment.latitude ? parseFloat(establishment.latitude) : establishment.latitude,
+      longitude: establishment.longitude ? parseFloat(establishment.longitude) : establishment.longitude,
+      average_rating: establishment.average_rating ? parseFloat(establishment.average_rating) : establishment.average_rating
+    };
   } catch (error) {
     if (error instanceof AppError) {
       throw error;

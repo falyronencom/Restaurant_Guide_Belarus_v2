@@ -28,18 +28,15 @@ export const createReview = async (reviewData) => {
   const { user_id, establishment_id, rating, content } = reviewData;
 
   const query = `
-    INSERT INTO reviews (user_id, establishment_id, rating, content, is_deleted, is_visible, is_edited)
-    VALUES ($1, $2, $3, $4, false, true, false)
-    RETURNING 
-      id, 
-      user_id, 
-      establishment_id, 
-      rating, 
-      content, 
-      is_deleted,
-      is_visible,
-      is_edited,
-      created_at, 
+    INSERT INTO reviews (user_id, establishment_id, rating, text)
+    VALUES ($1, $2, $3, $4)
+    RETURNING
+      id,
+      user_id,
+      establishment_id,
+      rating,
+      text as content,
+      created_at,
       updated_at
   `;
 
@@ -72,16 +69,13 @@ export const createReview = async (reviewData) => {
  */
 export const findReviewById = async (reviewId, includeDeleted = false) => {
   const query = `
-    SELECT 
-      r.id, 
-      r.user_id, 
-      r.establishment_id, 
-      r.rating, 
-      r.content, 
-      r.is_deleted,
-      r.is_visible,
-      r.is_edited,
-      r.created_at, 
+    SELECT
+      r.id,
+      r.user_id,
+      r.establishment_id,
+      r.rating,
+      r.text as content,
+      r.created_at,
       r.updated_at,
       u.name as author_name,
       u.email as author_email,
@@ -89,7 +83,6 @@ export const findReviewById = async (reviewId, includeDeleted = false) => {
     FROM reviews r
     JOIN users u ON r.user_id = u.id
     WHERE r.id = $1
-    ${includeDeleted ? '' : 'AND r.is_deleted = false'}
   `;
 
   try {
@@ -283,21 +276,17 @@ export const countReviewsByUser = async (userId, includeDeleted = false) => {
  */
 export const findExistingReview = async (userId, establishmentId) => {
   const query = `
-    SELECT 
-      id, 
-      user_id, 
-      establishment_id, 
-      rating, 
-      content, 
-      is_deleted,
-      is_visible,
-      is_edited,
-      created_at, 
+    SELECT
+      id,
+      user_id,
+      establishment_id,
+      rating,
+      text as content,
+      created_at,
       updated_at
     FROM reviews
-    WHERE user_id = $1 
+    WHERE user_id = $1
     AND establishment_id = $2
-    AND is_deleted = false
   `;
 
   try {
@@ -468,18 +457,16 @@ export const hardDeleteReview = async (reviewId) => {
 export const updateEstablishmentAggregates = async (establishmentId) => {
   const query = `
     UPDATE establishments
-    SET 
+    SET
       average_rating = (
         SELECT AVG(rating)::DECIMAL(3,2)
         FROM reviews
         WHERE establishment_id = $1
-        AND is_deleted = false
       ),
       review_count = (
         SELECT COUNT(*)
         FROM reviews
         WHERE establishment_id = $1
-        AND is_deleted = false
       ),
       updated_at = CURRENT_TIMESTAMP
     WHERE id = $1

@@ -161,8 +161,15 @@ export async function createReview(token, reviewData) {
     .set('Authorization', `Bearer ${token}`)
     .send(reviewData);
 
+  // Debug: Log response if data is missing
+  if (!response.body || !response.body.data) {
+    console.log('DEBUG: Review creation failed');
+    console.log('Status:', response.status);
+    console.log('Body:', JSON.stringify(response.body, null, 2));
+  }
+
   return {
-    review: response.body.data.review,
+    review: response.body?.data?.review,
     response
   };
 }
