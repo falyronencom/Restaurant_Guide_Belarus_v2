@@ -533,8 +533,8 @@ describe('establishmentService', () => {
       await expect(
         updateEstablishment(establishmentId, partnerId, { description: 'New' })
       ).rejects.toMatchObject({
-        statusCode: 404,
-        code: 'ESTABLISHMENT_NOT_FOUND',
+        statusCode: 403,
+        code: 'FORBIDDEN',
       });
 
       expect(EstablishmentModel.updateEstablishment).not.toHaveBeenCalled();

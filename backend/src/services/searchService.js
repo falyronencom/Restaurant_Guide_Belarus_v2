@@ -265,9 +265,16 @@ export async function searchByBounds({
 
   const result = await pool.query(query, params);
 
+  // Convert latitude/longitude from strings to numbers for JSON serialization
+  const establishments = result.rows.map(row => ({
+    ...row,
+    latitude: parseFloat(row.latitude),
+    longitude: parseFloat(row.longitude)
+  }));
+
   return {
-    establishments: result.rows,
-    total: result.rows.length
+    establishments,
+    total: establishments.length
   };
 }
 

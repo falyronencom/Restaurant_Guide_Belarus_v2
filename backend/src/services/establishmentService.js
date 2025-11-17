@@ -393,9 +393,9 @@ export const updateEstablishment = async (establishmentId, partnerId, updates) =
     const isOwner = await EstablishmentModel.checkOwnership(establishmentId, partnerId);
     if (!isOwner) {
       throw new AppError(
-        'Establishment not found or access denied',
-        404,
-        'ESTABLISHMENT_NOT_FOUND'
+        'Access denied. You can only update your own establishments.',
+        403,
+        'FORBIDDEN'
       );
     }
 
@@ -572,9 +572,9 @@ export const submitEstablishmentForModeration = async (establishmentId, partnerI
     const isOwner = await EstablishmentModel.checkOwnership(establishmentId, partnerId);
     if (!isOwner) {
       throw new AppError(
-        'Establishment not found or access denied',
-        404,
-        'ESTABLISHMENT_NOT_FOUND'
+        'Access denied. You can only update your own establishments.',
+        403,
+        'FORBIDDEN'
       );
     }
 

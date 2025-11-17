@@ -319,7 +319,7 @@ describe('E2E Journey: Search & Discovery Complete Flow', () => {
       expect(page2.response.status).toBe(200);
 
       expect(page1.pagination).toHaveProperty('total');
-      expect(page1.pagination).toHaveProperty('hasMore');
+      expect(page1.pagination).toHaveProperty('hasNext');
       expect(page1.establishments.length).toBeLessThanOrEqual(2);
       expect(page2.establishments.length).toBeLessThanOrEqual(2);
 

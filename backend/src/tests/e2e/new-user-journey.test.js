@@ -12,6 +12,7 @@
  * and verifies that all major systems work together correctly.
  */
 
+import { query } from '../utils/database.js';
 import {
   app,
   cleanDatabase,
@@ -46,10 +47,15 @@ describe('E2E Journey: New User Complete Flow', () => {
     const estab = await createEstablishment(partner.accessToken, {
       ...testEstablishments[0],
       latitude: 53.9, // Minsk center
-      longitude: 27.5,
-      status: 'active'
+      longitude: 27.5
     });
     establishment = estab.establishment;
+
+    // Manually update to active status so it appears in search results
+    await query(
+      'UPDATE establishments SET status = $1 WHERE id = $2',
+      ['active', establishment.id]
+    );
   });
 
   afterAll(async () => {
