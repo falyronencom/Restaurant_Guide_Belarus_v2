@@ -145,10 +145,15 @@ export async function searchByRadius({
   const hasNext = page < totalPages;
   const hasPrevious = page > 1;
 
-  // Transform results to include 'distance' field (in addition to distance_km for backward compatibility)
+  // Transform results with type conversions and distance field
   const establishments = result.rows.map(row => ({
     ...row,
-    distance: row.distance_km // Add 'distance' field that tests expect
+    distance: row.distance_km, // Add 'distance' field that tests expect
+    distance_km: parseFloat(row.distance_km),
+    latitude: parseFloat(row.latitude),
+    longitude: parseFloat(row.longitude),
+    average_rating: row.average_rating ? parseFloat(row.average_rating) : null,
+    review_count: parseInt(row.review_count) || 0
   }));
 
   return {

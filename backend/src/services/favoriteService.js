@@ -66,9 +66,12 @@ export const addToFavorites = async (userId, establishmentId) => {
   });
 
   return {
-    id: favorite.id,
-    establishment_id: favorite.establishment_id,
-    created_at: favorite.created_at,
+    favorite: {
+      id: favorite.id,
+      user_id: userId,
+      establishment_id: favorite.establishment_id,
+      created_at: favorite.created_at,
+    },
     message: 'Establishment added to favorites',
   };
 };
@@ -164,31 +167,26 @@ export const getUserFavorites = async (userId, options = {}) => {
   const hasNext = page < totalPages;
   const hasPrevious = page > 1;
 
-  // Format response with establishment details
+  // Format response with establishment details (flat structure for API compatibility)
   const formattedFavorites = favorites.map((favorite) => ({
     id: favorite.id,
+    user_id: favorite.user_id,
     establishment_id: favorite.establishment_id,
     created_at: favorite.created_at,
-    establishment: {
-      name: favorite.establishment_name,
-      description: favorite.establishment_description,
-      city: favorite.establishment_city,
-      address: favorite.establishment_address,
-      location: {
-        latitude: parseFloat(favorite.establishment_latitude),
-        longitude: parseFloat(favorite.establishment_longitude),
-      },
-      categories: favorite.establishment_categories,
-      cuisines: favorite.establishment_cuisines,
-      price_range: favorite.establishment_price_range,
-      rating: {
-        average: favorite.establishment_average_rating ? 
-          parseFloat(favorite.establishment_average_rating) : null,
-        count: favorite.establishment_review_count || 0,
-      },
-      is_active: favorite.establishment_status === 'active',
-      primary_image: favorite.establishment_primary_image,
-    },
+    establishment_name: favorite.establishment_name,
+    establishment_description: favorite.establishment_description,
+    establishment_city: favorite.establishment_city,
+    establishment_address: favorite.establishment_address,
+    establishment_latitude: parseFloat(favorite.establishment_latitude),
+    establishment_longitude: parseFloat(favorite.establishment_longitude),
+    establishment_categories: favorite.establishment_categories,
+    establishment_cuisines: favorite.establishment_cuisines,
+    establishment_price_range: favorite.establishment_price_range,
+    establishment_average_rating: favorite.establishment_average_rating ?
+      parseFloat(favorite.establishment_average_rating) : null,
+    establishment_review_count: favorite.establishment_review_count || 0,
+    establishment_status: favorite.establishment_status,
+    establishment_primary_image: favorite.establishment_primary_image,
   }));
 
   logger.info('Fetched user favorites', {
