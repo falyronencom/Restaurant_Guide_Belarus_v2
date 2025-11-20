@@ -218,11 +218,13 @@ export const submitForModeration = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     data: {
-      id: submittedEstablishment.id,
-      status: submittedEstablishment.status,
-      submitted_at: submittedEstablishment.updated_at,
-      message: 'Establishment submitted for moderation review',
+      establishment: {
+        id: submittedEstablishment.id,
+        status: submittedEstablishment.status,
+        submitted_at: submittedEstablishment.updated_at,
+      },
     },
+    message: 'Establishment submitted for moderation review',
   });
 });
 

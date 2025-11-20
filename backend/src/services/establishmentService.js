@@ -512,11 +512,36 @@ export const updateEstablishment = async (establishmentId, partnerId, updates) =
       });
     }
 
+    // Handle features and capacity - store in attributes JSONB field for compatibility
+    if (updates.features !== undefined || updates.capacity !== undefined) {
+      if (!updates.attributes) {
+        updates.attributes = {};
+      }
+      if (updates.features !== undefined) {
+        updates.attributes.features = updates.features;
+        delete updates.features;
+      }
+      if (updates.capacity !== undefined) {
+        updates.attributes.capacity = updates.capacity;
+        delete updates.capacity;
+      }
+    }
+
     // Update establishment
     const updatedEstablishment = await EstablishmentModel.updateEstablishment(
       establishmentId,
       updates
     );
+
+    // Extract features and capacity from attributes for response compatibility
+    if (updatedEstablishment.attributes) {
+      if (updatedEstablishment.attributes.features) {
+        updatedEstablishment.features = updatedEstablishment.attributes.features;
+      }
+      if (updatedEstablishment.attributes.capacity) {
+        updatedEstablishment.capacity = updatedEstablishment.attributes.capacity;
+      }
+    }
 
     logger.info('Establishment updated successfully', {
       establishmentId,
