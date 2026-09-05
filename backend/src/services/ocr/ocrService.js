@@ -34,6 +34,24 @@ import { generatePdfPageImageUrl } from '../../config/cloudinary.js';
 const VISION_FALLBACK_PAGE_LIMIT = 2;
 
 /**
+ * Upper bound of one job's wall-clock time, from the stage timeouts: the PDF
+ * download (pdfTextExtractor.PDF_FETCH_TIMEOUT_MS), one vision call — all
+ * pages go in a single request — and one structurer call; pdf-parse and the
+ * DB writes are seconds at most. A download timeout falls back to vision OCR
+ * (extractRawText — hence the sum includes the fallback path); a vision or
+ * structurer timeout fails the job right there (markFailed). Either way a job
+ * settles — done or failed — within this bound. server.js measures the
+ * graceful-shutdown budget against it
+ * (config/shutdown.js): ocrJobPoller.stop() waits for the job in flight, and
+ * a job that outlives the budget dies with the process as a 'processing'
+ * zombie for the stale sweep. Observed on production, July–August 2026
+ * (84 jobs): p50 6.7 s, p99 30 s, max 38 s.
+ */
+const JOB_DURATION_BOUND_MS = pdfTextExtractor.PDF_FETCH_TIMEOUT_MS +
+  visionOcrAdapter.REQUEST_TIMEOUT_MS +
+  llmStructurer.REQUEST_TIMEOUT_MS;
+
+/**
  * Build the list of image URLs to send to vision OCR, given a PDF media record.
  *
  * @param {Object} media - establishment_media row (file_type='pdf')
@@ -298,5 +316,6 @@ export {
   buildPdfPageUrls,
   buildResultSummary,
   notifyPartnerIfBatchFinished,
+  JOB_DURATION_BOUND_MS,
   VISION_FALLBACK_PAGE_LIMIT,
 };

@@ -120,4 +120,4 @@ export const structureMenu = async (rawText) => {
   }
 };
 
-export { STRUCTURER_SYSTEM_PROMPT, ResponseSchema, ItemSchema };
+export { STRUCTURER_SYSTEM_PROMPT, ResponseSchema, ItemSchema, REQUEST_TIMEOUT_MS };

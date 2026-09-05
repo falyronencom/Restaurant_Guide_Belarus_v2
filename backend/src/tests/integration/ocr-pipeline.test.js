@@ -88,6 +88,15 @@ const buildFetchMock = (structuredItems) => {
   });
 };
 
+describe('JOB_DURATION_BOUND_MS', () => {
+  // server.js measures the graceful-shutdown budget against this sum; a renamed
+  // summand would make it NaN, which never trips a comparison — pin it here,
+  // where the real module (not a mock) is imported.
+  test('is the finite sum of the three stage timeouts: PDF download + vision + structurer = 180 s', () => {
+    expect(ocrService.JOB_DURATION_BOUND_MS).toBe(60000 + 60000 + 60000);
+  });
+});
+
 describe('OCR pipeline integration', () => {
   let establishment;
   let originalFetch;

@@ -24,10 +24,10 @@
  * back to 'pending' (attempts left) or to 'failed' (last attempt spent) under
  * the same retry rule as markFailed, and a permanent failure closes the upload
  * batch exactly as processJob does. The job in flight in this process is never
- * that old (the vision and structurer calls abort after 60 s and the PDF
- * download is bounded by undici's 300 s defaults — a live job stays far below
- * the interval; see STALE_PROCESSING_INTERVAL in the model), so the sweep and
- * the running job touch disjoint rows.
+ * that old (the PDF download, the vision call and the structurer call each
+ * abort after 60 s — ocrService.JOB_DURATION_BOUND_MS is 180 s, far below the
+ * interval; see STALE_PROCESSING_INTERVAL in the model), so the sweep and the
+ * running job touch disjoint rows.
  *
  * Lifecycle:
  *   - start() runs one sweep immediately and begins the polling interval

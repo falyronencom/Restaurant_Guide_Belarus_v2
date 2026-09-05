@@ -22,19 +22,39 @@ const MIN_DIGIT_COUNT = 3;
 const MIN_PRINTABLE_RATIO = 0.7;
 
 /**
+ * Abort the PDF download after this long. fetch() has no timeout of its own:
+ * without a signal the download is bounded only by undici's defaults (300 s
+ * to the headers, 300 s between body chunks) — the one OCR stage that could
+ * outlive the graceful-shutdown budget (config/shutdown.js); the vision and
+ * structurer calls already abort after their REQUEST_TIMEOUT_MS. A 60 MB menu
+ * from Cloudinary downloads in seconds. A timeout surfaces as "This operation
+ * was aborted" and the orchestrator falls back to vision OCR, as for any
+ * download failure. Same pattern as visionOcrAdapter (controller + timer).
+ */
+const PDF_FETCH_TIMEOUT_MS = 60000;
+
+/**
  * Fetch a PDF from a URL and return it as a Buffer.
- * Uses the global fetch (Node.js 18+).
+ * Uses the global fetch (Node.js 18+), aborted after PDF_FETCH_TIMEOUT_MS —
+ * the signal covers the body read (arrayBuffer) as well as the headers.
  *
  * @param {string} url - Cloudinary PDF URL
  * @returns {Promise<Buffer>}
  */
 const fetchPdfBuffer = async (url) => {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), PDF_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } finally {
+    clearTimeout(timeoutId);
   }
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
 };
 
 /**
@@ -116,6 +136,7 @@ export {
   MIN_AVG_CHARS_PER_PAGE,
   MIN_DIGIT_COUNT,
   MIN_PRINTABLE_RATIO,
+  PDF_FETCH_TIMEOUT_MS,
   hasUsableTextLayer,
   computePrintableRatio,
 };

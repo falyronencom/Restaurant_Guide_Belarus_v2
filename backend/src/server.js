@@ -11,6 +11,8 @@ import { rateLimiter } from './middleware/rateLimiter.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { UPLOADS_ROOT } from './middleware/upload.js';
 import * as ocrJobPoller from './services/ocr/ocrJobPoller.js';
+import { JOB_DURATION_BOUND_MS as OCR_JOB_DURATION_BOUND_MS } from './services/ocr/ocrService.js';
+import { resolveShutdownBudget } from './config/shutdown.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -22,6 +24,15 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+
+/**
+ * Graceful-shutdown budget — resolved once, from Railway's drain period when
+ * it is set (config/shutdown.js). startServer() logs it together with the
+ * misalignments it reports; gracefulShutdown() arms its force-exit timer with it.
+ */
+const shutdownBudget = resolveShutdownBudget(process.env, {
+  jobBoundMs: OCR_JOB_DURATION_BOUND_MS,
+});
 
 /**
  * Trust exactly ONE reverse-proxy hop (Railway's edge terminates TLS and
@@ -131,18 +142,46 @@ app.use(errorHandler);
 
 /**
  * Graceful shutdown handler.
- * ...existing code...
+ *
+ * Order (Coordinator decision 2026-09-05, option «б» — align the windows):
+ *   1. Arm the force-exit timer with the budget from config/shutdown.js. On
+ *      Railway that is the drain period minus a margin, so the timer fires
+ *      before the platform's SIGKILL, never after it.
+ *   2. Stop the OCR poller at once, in parallel with server.close(): the
+ *      poller does not need the HTTP server, and stop() waits for the job in
+ *      flight (up to ocrService.JOB_DURATION_BOUND_MS) — it must not queue
+ *      behind a slow request that is still draining.
+ *   3. Once the HTTP connections are gone and the poller has stopped, close
+ *      the pool and Redis, then exit.
+ * A job that outlives the budget dies with the process as a 'processing'
+ * row; ocrJobPoller's stale sweep settles it about an hour later.
  */
 const gracefulShutdown = async (signal) => {
-  logger.info(`${signal} received, starting graceful shutdown`);
+  logger.info(`${signal} received, starting graceful shutdown`, {
+    budgetMs: shutdownBudget.timeoutMs,
+  });
+
+  // Force exit if graceful shutdown outlives the budget
+  setTimeout(() => {
+    logger.error('Graceful shutdown timeout, forcing exit', {
+      budgetMs: shutdownBudget.timeoutMs,
+    });
+    process.exit(1);
+  }, shutdownBudget.timeoutMs);
+
+  // Stop OCR poller now — waits for the in-flight job and stale sweep. Errors
+  // are logged inside stop(); this catch only keeps the await below safe.
+  const pollerStopped = ocrJobPoller.stop().catch((error) => {
+    logger.error('OCR poller stop failed during shutdown', { error: error.message });
+  });
 
   // Stop accepting new connections
   server.close(async () => {
     logger.info('HTTP server closed, closing external connections');
 
     try {
-      // Stop OCR poller — waits for in-flight job to finish before closing DB
-      await ocrJobPoller.stop();
+      // The poller must be idle before the pool goes away
+      await pollerStopped;
 
       // Close database connection pool
       await closePool();
@@ -160,12 +199,6 @@ const gracefulShutdown = async (signal) => {
       process.exit(1);
     }
   });
-
-  // Force exit if graceful shutdown takes too long (30 seconds)
-  setTimeout(() => {
-    logger.error('Graceful shutdown timeout, forcing exit');
-    process.exit(1);
-  }, 30000);
 };
 
 /**
@@ -179,6 +212,19 @@ const startServer = async () => {
       port: PORT,
       nodeVersion: process.version,
     });
+
+    // Shutdown budget vs. the platform drain and the OCR job bound — the only
+    // place the misalignment surfaces without telemetry (config/shutdown.js)
+    logger.info('Graceful shutdown budget resolved', {
+      timeoutMs: shutdownBudget.timeoutMs,
+      source: shutdownBudget.source,
+      drainingMs: shutdownBudget.drainingMs,
+      onRailway: shutdownBudget.onRailway,
+      ocrJobBoundMs: OCR_JOB_DURATION_BOUND_MS,
+    });
+    for (const warning of shutdownBudget.warnings) {
+      logger.warn(`Graceful shutdown budget: ${warning}`);
+    }
 
     // Test database connection
     logger.info('Testing database connection...');
