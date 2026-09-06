@@ -23,24 +23,23 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { authenticate, authorize } from '../../middleware/auth.js';
 import { validate } from '../../middleware/errorHandler.js';
+import { TEMP_UPLOAD_DIR } from '../../middleware/upload.js';
 import { body } from 'express-validator';
 import * as CloudinaryUtil from '../../config/cloudinary.js';
 import logger from '../../utils/logger.js';
 
 const router = express.Router();
 
-// Ensure upload directory exists
-const uploadDir = 'backend/tmp/uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
 /**
  * Configure multer for temporary file uploads
+ *
+ * Destination is the module-relative TEMP_UPLOAD_DIR (backend/tmp/uploads);
+ * middleware/upload.js creates it at import time, so it exists before the
+ * first write regardless of the process cwd.
  */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadDir);
+    cb(null, TEMP_UPLOAD_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;

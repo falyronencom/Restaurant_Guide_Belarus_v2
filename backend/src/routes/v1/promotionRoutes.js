@@ -20,13 +20,15 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import * as PromotionController from '../../controllers/promotionController.js';
 import { authenticate, authorize } from '../../middleware/auth.js';
+import { TEMP_UPLOAD_DIR } from '../../middleware/upload.js';
 
 const router = express.Router();
 
-// Multer config — same pattern as mediaRoutes.js
+// Multer config — same pattern as mediaRoutes.js; the temp dir is the
+// module-relative TEMP_UPLOAD_DIR (created at import by middleware/upload.js)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'backend/tmp/uploads');
+    cb(null, TEMP_UPLOAD_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;

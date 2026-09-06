@@ -9,15 +9,20 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import request from 'supertest';
 import { jest } from '@jest/globals';
 import { clearAllData } from '../utils/database.js';
 import { createPartnerAndGetToken, createTestEstablishment } from '../utils/auth.js';
 import redisClient, { connectRedis } from '../../config/redis.js';
+// Module-relative temp dir every multer destination writes to (backend/tmp/uploads).
+// Importing it does not touch cloudinary.js, so it is safe ahead of the mock below.
+import { TEMP_UPLOAD_DIR } from '../../middleware/upload.js';
 
 // Mock Cloudinary
 let app;
 let pool;
+let cloudinary;
 
 jest.unstable_mockModule('../../config/cloudinary.js', () => ({
   uploadImage: jest.fn(async () => ({
@@ -72,11 +77,14 @@ const clearRateLimitKeys = async () => {
 };
 
 beforeAll(async () => {
-  fs.mkdirSync('backend/tmp/uploads', { recursive: true });
+  // Ensure multer's temp directory exists — the module-relative one the routes
+  // actually write to, never a cwd-relative string (cwd differs local vs Railway).
+  fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true });
   const appModule = await import('../../server.js');
   app = appModule.default || appModule.app;
   const poolModule = await import('../../config/database.js');
   pool = poolModule.default;
+  cloudinary = await import('../../config/cloudinary.js');
   if (!redisClient.isOpen) {
     const connected = await connectRedis();
     if (!connected) {
@@ -185,6 +193,49 @@ describe('Promotions CRUD', () => {
     expect(promo.image_url).toBeTruthy();
     expect(promo.thumbnail_url).toBeTruthy();
     expect(promo.preview_url).toBeTruthy();
+  });
+
+  // Regression (2026-09-06): promotionRoutes had its own multer config with the
+  // cwd-relative destination 'backend/tmp/uploads' (backend/backend/tmp/uploads
+  // locally, /app/backend/tmp/uploads on Railway). The path multer hands to the
+  // service must sit inside the module-relative TEMP_UPLOAD_DIR whatever the cwd is.
+  // resetMocks wipes the factory implementations before every test, so the
+  // Cloudinary stubs the image path needs are re-armed here.
+  test('writes the uploaded image into the module-relative TEMP_UPLOAD_DIR before the Cloudinary transfer', async () => {
+    cloudinary.isValidImageType.mockReturnValue(true);
+    cloudinary.isValidImageSize.mockReturnValue(true);
+    // Existence is sampled inside the stub, at transfer time: the service may
+    // one day unlink the temp file after the upload, and that must not turn
+    // this cwd guard red.
+    let seenOnDisk = null;
+    cloudinary.uploadImage.mockImplementation(async (filePath) => {
+      seenOnDisk = fs.existsSync(filePath);
+      return {
+        public_id: 'test-promo-public-id',
+        secure_url: 'https://res.cloudinary.com/test/promotions/test.jpg',
+      };
+    });
+    cloudinary.generateAllResolutions.mockReturnValue({
+      url: 'https://res.cloudinary.com/test/promotions/original.jpg',
+      thumbnail_url: 'https://res.cloudinary.com/test/promotions/thumbnail.jpg',
+      preview_url: 'https://res.cloudinary.com/test/promotions/preview.jpg',
+    });
+
+    const response = await request(app)
+      .post('/api/v1/partner/promotions')
+      .set('Authorization', `Bearer ${token}`)
+      .field('establishment_id', establishment.id)
+      .field('title', 'Акция с загруженным фото')
+      .attach('image', Buffer.from('fake image'), 'promo.jpg')
+      .expect(201);
+
+    expect(response.body.data.image_url).toBe('https://res.cloudinary.com/test/promotions/original.jpg');
+    expect(cloudinary.uploadImage).toHaveBeenCalledTimes(1);
+    const [tempFilePath] = cloudinary.uploadImage.mock.calls[0];
+    expect(path.isAbsolute(tempFilePath)).toBe(true);
+    expect(path.dirname(tempFilePath)).toBe(TEMP_UPLOAD_DIR);
+    expect(seenOnDisk).toBe(true);
+    fs.rmSync(tempFilePath, { force: true });
   });
 
   test('should list promotions for partner establishment', async () => {

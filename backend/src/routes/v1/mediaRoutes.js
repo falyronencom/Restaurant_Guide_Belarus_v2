@@ -27,6 +27,7 @@ import * as MediaController from '../../controllers/mediaController.js';
 import * as MediaValidation from '../../validators/mediaValidation.js';
 import { authenticate, authorize } from '../../middleware/auth.js';
 import { validate } from '../../middleware/errorHandler.js';
+import { TEMP_UPLOAD_DIR } from '../../middleware/upload.js';
 
 const router = express.Router({ mergeParams: true });
 
@@ -37,20 +38,22 @@ const router = express.Router({ mergeParams: true });
  * directory before they're processed and uploaded to Cloudinary.
  * 
  * Configuration:
- * - Storage: Disk storage in /tmp/uploads directory
+ * - Storage: Disk storage in TEMP_UPLOAD_DIR (backend/tmp/uploads, module-relative —
+ *   owned by middleware/upload.js; never a cwd-relative string: cwd is backend/
+ *   locally and /app on Railway)
  * - Filename: UUID-based to prevent conflicts
  * - File filter: Only allow image types (jpeg, jpg, png, webp, heic)
  * - Size limit: 10MB maximum per file
  * 
  * The files are stored temporarily and should be cleaned up after Cloudinary
  * upload completes. A cron job or periodic cleanup process should remove old
- * files from /tmp/uploads to prevent disk space issues.
+ * files from TEMP_UPLOAD_DIR to prevent disk space issues.
  */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // Store uploaded files in /tmp/uploads directory
-    // This directory should exist and be writable
-    cb(null, 'backend/tmp/uploads');
+    // middleware/upload.js creates TEMP_UPLOAD_DIR at import time, so it exists
+    // before the first write regardless of the process cwd
+    cb(null, TEMP_UPLOAD_DIR);
   },
   filename: (req, file, cb) => {
     // Generate unique filename using UUID to prevent conflicts

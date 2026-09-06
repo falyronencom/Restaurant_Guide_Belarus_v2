@@ -14,10 +14,14 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import request from 'supertest';
 import { jest } from '@jest/globals';
 import { clearAllData } from '../utils/database.js';
 import { createPartnerAndGetToken, createTestEstablishment } from '../utils/auth.js';
+// Module-relative temp dir every multer destination writes to (backend/tmp/uploads).
+// Importing it does not touch cloudinary.js, so it is safe ahead of the mock below.
+import { TEMP_UPLOAD_DIR } from '../../middleware/upload.js';
 
 // Mock Cloudinary for ES modules — all 7 exports + default
 let app;
@@ -72,8 +76,9 @@ jest.unstable_mockModule('../../config/cloudinary.js', () => ({
 
 // Setup and teardown
 beforeAll(async () => {
-  // Ensure multer upload directory exists
-  fs.mkdirSync('backend/tmp/uploads', { recursive: true });
+  // Ensure multer's temp directory exists — the module-relative one the routes
+  // actually write to, never a cwd-relative string (cwd differs local vs Railway).
+  fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true });
 
   const appModule = await import('../../server.js');
   app = appModule.default || appModule.app;
@@ -325,6 +330,42 @@ describe('Media System - Upload Operations', () => {
 
       expect(response.body.error.code).toBe('FILE_TOO_LARGE');
     });
+
+    // Regression (2026-09-06): multer's destination used to be the cwd-relative
+    // string 'backend/tmp/uploads'. Resolved against process.cwd() — backend/
+    // locally, /app on Railway — it landed in backend/backend/tmp/uploads and
+    // /app/backend/tmp/uploads. The path multer hands to the service must sit
+    // inside the module-relative TEMP_UPLOAD_DIR whatever the cwd is.
+    test('writes the temp file into the module-relative TEMP_UPLOAD_DIR, not a cwd-relative path', async () => {
+      // Existence is sampled inside the stub, at transfer time: the service may
+      // one day unlink the temp file after the upload, and that must not turn
+      // this cwd guard red.
+      let seenOnDisk = null;
+      cloudinary.uploadImage.mockImplementation(async (filePath) => {
+        seenOnDisk = fs.existsSync(filePath);
+        return {
+          public_id: 'test-public-id',
+          secure_url: 'https://res.cloudinary.com/test/image/upload/v1/establishments/test/interior/test.jpg',
+          width: 800,
+          height: 600,
+          format: 'jpg',
+        };
+      });
+
+      await request(app)
+        .post(`/api/v1/partner/establishments/${establishment.id}/media`)
+        .set('Authorization', `Bearer ${partnerToken}`)
+        .field('type', 'interior')
+        .attach('file', Buffer.from('fake image'), 'test.jpg')
+        .expect(201);
+
+      expect(cloudinary.uploadImage).toHaveBeenCalledTimes(1);
+      const [tempFilePath] = cloudinary.uploadImage.mock.calls[0];
+      expect(path.isAbsolute(tempFilePath)).toBe(true);
+      expect(path.dirname(tempFilePath)).toBe(TEMP_UPLOAD_DIR);
+      expect(seenOnDisk).toBe(true);
+      fs.rmSync(tempFilePath, { force: true });
+    });
   });
 
   describe('POST /api/v1/partner/media/upload - Temp Upload Format Gate', () => {
@@ -350,6 +391,24 @@ describe('Media System - Upload Operations', () => {
         .expect(201);
 
       expect(response.body.data.file_type).toBe('image');
+    });
+
+    // Same regression guard as the establishment media route above: the
+    // pre-registration route had its own cwd-relative 'backend/tmp/uploads'.
+    // This route unlinks the temp file right after the transfer, so only the
+    // path handed to Cloudinary is checked here.
+    test('writes the temp file into the module-relative TEMP_UPLOAD_DIR', async () => {
+      await request(app)
+        .post('/api/v1/partner/media/upload')
+        .set('Authorization', `Bearer ${partnerToken}`)
+        .field('type', 'interior')
+        .attach('file', Buffer.from('fake image'), { filename: 'photo.jpg', contentType: 'image/jpeg' })
+        .expect(201);
+
+      expect(cloudinary.uploadImage).toHaveBeenCalledTimes(1);
+      const [tempFilePath] = cloudinary.uploadImage.mock.calls[0];
+      expect(path.isAbsolute(tempFilePath)).toBe(true);
+      expect(path.dirname(tempFilePath)).toBe(TEMP_UPLOAD_DIR);
     });
 
     test('rejects .ai spoofed as application/pdf', async () => {
