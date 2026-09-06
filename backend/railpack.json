@@ -11,5 +11,8 @@
         "npm ci"
       ]
     }
+  },
+  "deploy": {
+    "startCommand": "exec node src/server.js"
   }
 }
