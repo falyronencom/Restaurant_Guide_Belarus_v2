@@ -12,11 +12,13 @@
  * Note on file uploads: This controller expects file uploads to be handled by
  * multer middleware, which processes multipart/form-data and provides file
  * information in req.file. The actual file handling setup is done in the
- * routes layer.
+ * routes layer. The temp file multer wrote (TEMP_UPLOAD_DIR) is owned by this
+ * controller from then on: it is discarded on every outcome, see uploadMedia.
  */
 
 import * as MediaService from '../services/mediaService.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { discardTempUpload } from '../utils/tempUpload.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -63,13 +65,21 @@ export const uploadMedia = asyncHandler(async (req, res) => {
     is_primary: req.body.is_primary === 'true' || req.body.is_primary === true,
   };
 
-  // Call service layer to handle upload
-  const media = await MediaService.uploadMedia(
-    partnerId,
-    establishmentId,
-    req.file,
-    metadata,
-  );
+  // Call service layer to handle upload. multer wrote the file into
+  // TEMP_UPLOAD_DIR and nothing downstream deletes it, so it is discarded here
+  // on every outcome — success, validation throw, DB error — and before the
+  // response leaves: once the client has the answer, the disk is clean.
+  let media;
+  try {
+    media = await MediaService.uploadMedia(
+      partnerId,
+      establishmentId,
+      req.file,
+      metadata,
+    );
+  } finally {
+    await discardTempUpload(req.file);
+  }
 
   logger.info('Media uploaded via API', {
     mediaId: media.id,

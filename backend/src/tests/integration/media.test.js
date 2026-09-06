@@ -74,6 +74,26 @@ jest.unstable_mockModule('../../config/cloudinary.js', () => ({
   default: {},
 }));
 
+/**
+ * Entries that appeared in TEMP_UPLOAD_DIR since `before` (a Set snapshot of
+ * the listing). On rejection paths the Cloudinary stub is never reached, so
+ * the temp file is tracked through the directory instead of the upload call.
+ */
+const newEntriesSince = (before) =>
+  fs.readdirSync(TEMP_UPLOAD_DIR).filter((name) => !before.has(name));
+
+/**
+ * Poll `predicate` until it holds or `timeoutMs` passes. Used where the temp
+ * file is discarded right after the response is sent (express-validator
+ * rejections in `validate`): the client can see the 422 before the unlink lands.
+ */
+const waitUntil = async (predicate, timeoutMs = 2000, stepMs = 20) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+};
+
 // Setup and teardown
 beforeAll(async () => {
   // Ensure multer's temp directory exists — the module-relative one the routes
@@ -366,6 +386,128 @@ describe('Media System - Upload Operations', () => {
       expect(seenOnDisk).toBe(true);
       fs.rmSync(tempFilePath, { force: true });
     });
+
+    // Regression (2026-09-06): the controller removes the temp file multer
+    // wrote into TEMP_UPLOAD_DIR on every outcome. Until then nothing did —
+    // uploads through this route leaked one file each (tempMediaRoutes and
+    // uploadAvatar unlinked theirs, mediaService never did): on Railway the
+    // ephemeral disk grew until the next deploy, locally 16.7k files / 24 MB.
+    describe('temp file cleanup', () => {
+      test('removes the temp file after a successful image upload (201)', async () => {
+        let seenOnDisk = null;
+        cloudinary.uploadImage.mockImplementation(async (filePath) => {
+          seenOnDisk = fs.existsSync(filePath);
+          return {
+            public_id: 'test-public-id',
+            secure_url: 'https://res.cloudinary.com/test/image/upload/v1/establishments/test/interior/test.jpg',
+          };
+        });
+
+        await request(app)
+          .post(`/api/v1/partner/establishments/${establishment.id}/media`)
+          .set('Authorization', `Bearer ${partnerToken}`)
+          .field('type', 'interior')
+          .attach('file', Buffer.from('fake image'), 'test.jpg')
+          .expect(201);
+
+        expect(cloudinary.uploadImage).toHaveBeenCalledTimes(1);
+        const [tempFilePath] = cloudinary.uploadImage.mock.calls[0];
+        // Present for the transfer — gone once the response is out.
+        expect(seenOnDisk).toBe(true);
+        expect(fs.existsSync(tempFilePath)).toBe(false);
+      });
+
+      test('removes the temp file after a successful PDF menu upload (201)', async () => {
+        let seenOnDisk = null;
+        cloudinary.uploadPdf.mockImplementation(async (filePath) => {
+          seenOnDisk = fs.existsSync(filePath);
+          return {
+            public_id: 'test-pdf-public-id',
+            secure_url: 'https://res.cloudinary.com/test/image/upload/v1/establishments/test/menu_pdf/test.pdf',
+            bytes: 1024,
+            pages: 1,
+          };
+        });
+
+        await request(app)
+          .post(`/api/v1/partner/establishments/${establishment.id}/media`)
+          .set('Authorization', `Bearer ${partnerToken}`)
+          .field('type', 'menu')
+          .attach('file', Buffer.from('%PDF-1.4 fake'), { filename: 'menu.pdf', contentType: 'application/pdf' })
+          .expect(201);
+
+        expect(cloudinary.uploadPdf).toHaveBeenCalledTimes(1);
+        const [tempFilePath] = cloudinary.uploadPdf.mock.calls[0];
+        expect(seenOnDisk).toBe(true);
+        expect(fs.existsSync(tempFilePath)).toBe(false);
+      });
+
+      test('removes the temp file when the service rejects the file (FILE_TOO_LARGE, 422)', async () => {
+        cloudinary.isValidImageSize.mockReturnValueOnce(false);
+        const before = new Set(fs.readdirSync(TEMP_UPLOAD_DIR));
+
+        const response = await request(app)
+          .post(`/api/v1/partner/establishments/${establishment.id}/media`)
+          .set('Authorization', `Bearer ${partnerToken}`)
+          .field('type', 'interior')
+          .attach('file', Buffer.from('fake image'), 'huge.jpg')
+          .expect(422);
+
+        expect(response.body.error.code).toBe('FILE_TOO_LARGE');
+        expect(cloudinary.uploadImage).not.toHaveBeenCalled();
+        expect(newEntriesSince(before)).toEqual([]);
+      });
+
+      test('removes the temp file when a PDF comes with a non-menu type (PDF_TYPE_MISMATCH, 422)', async () => {
+        const before = new Set(fs.readdirSync(TEMP_UPLOAD_DIR));
+
+        const response = await request(app)
+          .post(`/api/v1/partner/establishments/${establishment.id}/media`)
+          .set('Authorization', `Bearer ${partnerToken}`)
+          .field('type', 'interior')
+          .attach('file', Buffer.from('%PDF-1.4 fake'), 'menu.pdf')
+          .expect(422);
+
+        expect(response.body.error.code).toBe('PDF_TYPE_MISMATCH');
+        expect(cloudinary.uploadPdf).not.toHaveBeenCalled();
+        expect(newEntriesSince(before)).toEqual([]);
+      });
+
+      test('removes the temp file when the Cloudinary transfer fails (500)', async () => {
+        cloudinary.uploadImage.mockRejectedValueOnce(new Error('cloudinary unavailable'));
+
+        const response = await request(app)
+          .post(`/api/v1/partner/establishments/${establishment.id}/media`)
+          .set('Authorization', `Bearer ${partnerToken}`)
+          .field('type', 'interior')
+          .attach('file', Buffer.from('fake image'), 'test.jpg')
+          .expect(500);
+
+        expect(response.body.error.code).toBe('MEDIA_UPLOAD_FAILED');
+        expect(cloudinary.uploadImage).toHaveBeenCalledTimes(1);
+        const [tempFilePath] = cloudinary.uploadImage.mock.calls[0];
+        expect(fs.existsSync(tempFilePath)).toBe(false);
+      });
+
+      // express-validator runs after multer (it needs the parsed fields), so a
+      // request it rejects is already on disk and never reaches the controller.
+      // The shared `validate` middleware discards it right after answering —
+      // the 422 does not wait for the disk — hence the poll.
+      test('removes the temp file when express-validator rejects the request (VALIDATION_ERROR, 422)', async () => {
+        const before = new Set(fs.readdirSync(TEMP_UPLOAD_DIR));
+
+        const response = await request(app)
+          .post(`/api/v1/partner/establishments/${establishment.id}/media`)
+          .set('Authorization', `Bearer ${partnerToken}`)
+          .field('type', 'invalid-type')
+          .attach('file', Buffer.from('fake image'), 'test.jpg')
+          .expect(422);
+
+        expect(response.body.error.code).toBe('VALIDATION_ERROR');
+        await waitUntil(() => newEntriesSince(before).length === 0);
+        expect(newEntriesSince(before)).toEqual([]);
+      });
+    });
   });
 
   describe('POST /api/v1/partner/media/upload - Temp Upload Format Gate', () => {
@@ -409,6 +551,24 @@ describe('Media System - Upload Operations', () => {
       const [tempFilePath] = cloudinary.uploadImage.mock.calls[0];
       expect(path.isAbsolute(tempFilePath)).toBe(true);
       expect(path.dirname(tempFilePath)).toBe(TEMP_UPLOAD_DIR);
+    });
+
+    // This route validates `type` after multer as well; the file a rejected
+    // request left behind is discarded by the shared `validate` middleware
+    // (poll: the 422 does not wait for the disk).
+    test('removes the temp file when express-validator rejects the request (VALIDATION_ERROR, 422)', async () => {
+      const before = new Set(fs.readdirSync(TEMP_UPLOAD_DIR));
+
+      const response = await request(app)
+        .post('/api/v1/partner/media/upload')
+        .set('Authorization', `Bearer ${partnerToken}`)
+        .field('type', 'invalid-type')
+        .attach('file', Buffer.from('fake image'), { filename: 'photo.jpg', contentType: 'image/jpeg' })
+        .expect(422);
+
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
+      await waitUntil(() => newEntriesSince(before).length === 0);
+      expect(newEntriesSince(before)).toEqual([]);
     });
 
     test('rejects .ai spoofed as application/pdf', async () => {

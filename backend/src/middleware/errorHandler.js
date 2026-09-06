@@ -1,4 +1,5 @@
 import logger from '../utils/logger.js';
+import { discardTempUpload } from '../utils/tempUpload.js';
 import { validationResult } from 'express-validator';
 
 /**
@@ -176,7 +177,7 @@ export const asyncHandler = (fn) => {
  * This middleware processes the results of express-validator validation chains.
  * It should be placed after validation middleware and before the controller.
  * 
- * If validation fails, it formats the errors and returns a 400 Bad Request response.
+ * If validation fails, it formats the errors and returns a 422 Unprocessable Entity response.
  * If validation passes, it calls next() to proceed to the controller.
  * 
  * Usage:
@@ -207,6 +208,12 @@ export const validate = (req, res, next) => {
       errors: formattedErrors,
       correlationId: req.correlationId,
     });
+
+    // A multipart request rejected here is already on disk: multer runs before
+    // the validators (they need the parsed fields), and the controller that
+    // would discard the temp file is never reached. Fire-and-forget — the
+    // helper never rejects, and the 422 does not wait for the disk.
+    discardTempUpload(req.file);
 
     return res.status(422).json({
       success: false,

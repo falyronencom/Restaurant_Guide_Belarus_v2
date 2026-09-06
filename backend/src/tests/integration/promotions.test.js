@@ -76,6 +76,26 @@ const clearRateLimitKeys = async () => {
   }
 };
 
+/**
+ * Entries that appeared in TEMP_UPLOAD_DIR since `before` (a Set snapshot of
+ * the listing). On rejection paths the Cloudinary stub is never reached, so
+ * the temp file is tracked through the directory instead of the upload call.
+ */
+const newEntriesSince = (before) =>
+  fs.readdirSync(TEMP_UPLOAD_DIR).filter((name) => !before.has(name));
+
+/**
+ * Poll `predicate` until it holds or `timeoutMs` passes. Used where the temp
+ * file is discarded right after the response is sent (the controller's own
+ * 400s): the client can see the answer before the unlink lands.
+ */
+const waitUntil = async (predicate, timeoutMs = 2000, stepMs = 20) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+};
+
 beforeAll(async () => {
   // Ensure multer's temp directory exists — the module-relative one the routes
   // actually write to, never a cwd-relative string (cwd differs local vs Railway).
@@ -236,6 +256,128 @@ describe('Promotions CRUD', () => {
     expect(path.dirname(tempFilePath)).toBe(TEMP_UPLOAD_DIR);
     expect(seenOnDisk).toBe(true);
     fs.rmSync(tempFilePath, { force: true });
+  });
+
+  // Regression (2026-09-06): the controller removes the temp image multer
+  // wrote into TEMP_UPLOAD_DIR on every outcome — promotionService never did,
+  // so every promotion image leaked one file (on Railway the ephemeral disk
+  // grew until the next deploy). resetMocks wipes the factory implementations
+  // before each test, so the stubs the image path needs are re-armed per test.
+  describe('temp file cleanup', () => {
+    const PROMO_URLS = {
+      url: 'https://res.cloudinary.com/test/promotions/original.jpg',
+      thumbnail_url: 'https://res.cloudinary.com/test/promotions/thumbnail.jpg',
+      preview_url: 'https://res.cloudinary.com/test/promotions/preview.jpg',
+    };
+
+    // Arms the image path for a successful transfer and samples the temp
+    // file's existence inside the stub, at transfer time.
+    const armSuccessfulTransfer = () => {
+      const seen = { onDisk: null };
+      cloudinary.isValidImageType.mockReturnValue(true);
+      cloudinary.isValidImageSize.mockReturnValue(true);
+      cloudinary.generateAllResolutions.mockReturnValue(PROMO_URLS);
+      cloudinary.uploadImage.mockImplementation(async (filePath) => {
+        seen.onDisk = fs.existsSync(filePath);
+        return {
+          public_id: 'test-promo-public-id',
+          secure_url: 'https://res.cloudinary.com/test/promotions/test.jpg',
+        };
+      });
+      return seen;
+    };
+
+    test('removes the temp image after a successful create (201)', async () => {
+      const seen = armSuccessfulTransfer();
+
+      const response = await request(app)
+        .post('/api/v1/partner/promotions')
+        .set('Authorization', `Bearer ${token}`)
+        .field('establishment_id', establishment.id)
+        .field('title', 'Акция с фото')
+        .attach('image', Buffer.from('fake image'), 'promo.jpg')
+        .expect(201);
+
+      expect(response.body.data.image_url).toBe(PROMO_URLS.url);
+      expect(cloudinary.uploadImage).toHaveBeenCalledTimes(1);
+      const [tempFilePath] = cloudinary.uploadImage.mock.calls[0];
+      // Present for the transfer — gone once the response is out.
+      expect(seen.onDisk).toBe(true);
+      expect(fs.existsSync(tempFilePath)).toBe(false);
+    });
+
+    test('removes the temp image when the service rejects it (FILE_TOO_LARGE, 422)', async () => {
+      cloudinary.isValidImageType.mockReturnValue(true);
+      cloudinary.isValidImageSize.mockReturnValue(false);
+      const before = new Set(fs.readdirSync(TEMP_UPLOAD_DIR));
+
+      const response = await request(app)
+        .post('/api/v1/partner/promotions')
+        .set('Authorization', `Bearer ${token}`)
+        .field('establishment_id', establishment.id)
+        .field('title', 'Акция с огромным фото')
+        .attach('image', Buffer.from('fake image'), 'huge.jpg')
+        .expect(422);
+
+      expect(response.body.error.code).toBe('FILE_TOO_LARGE');
+      expect(cloudinary.uploadImage).not.toHaveBeenCalled();
+      expect(newEntriesSince(before)).toEqual([]);
+    });
+
+    // The controller's own 400s answer first and discard right after — the
+    // response does not wait for the disk — hence the poll.
+    test('removes the temp image when the controller rejects the input (400, title missing)', async () => {
+      const before = new Set(fs.readdirSync(TEMP_UPLOAD_DIR));
+
+      const response = await request(app)
+        .post('/api/v1/partner/promotions')
+        .set('Authorization', `Bearer ${token}`)
+        .field('establishment_id', establishment.id)
+        .field('title', '')
+        .attach('image', Buffer.from('fake image'), 'promo.jpg')
+        .expect(400);
+
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
+      await waitUntil(() => newEntriesSince(before).length === 0);
+      expect(newEntriesSince(before)).toEqual([]);
+    });
+
+    test('removes the temp image after a successful update (200)', async () => {
+      const createRes = await createPromotionViaAPI(token, establishment.id);
+      const promotionId = createRes.body.data.id;
+      const seen = armSuccessfulTransfer();
+
+      const response = await request(app)
+        .patch(`/api/v1/partner/promotions/${promotionId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .field('title', 'Акция с новым фото')
+        .attach('image', Buffer.from('fake image'), 'promo-2.jpg')
+        .expect(200);
+
+      expect(response.body.data.image_url).toBe(PROMO_URLS.url);
+      expect(cloudinary.uploadImage).toHaveBeenCalledTimes(1);
+      const [tempFilePath] = cloudinary.uploadImage.mock.calls[0];
+      expect(seen.onDisk).toBe(true);
+      expect(fs.existsSync(tempFilePath)).toBe(false);
+    });
+
+    test('removes the temp image when the update is rejected (FILE_TOO_LARGE, 422)', async () => {
+      const createRes = await createPromotionViaAPI(token, establishment.id);
+      const promotionId = createRes.body.data.id;
+      cloudinary.isValidImageType.mockReturnValue(true);
+      cloudinary.isValidImageSize.mockReturnValue(false);
+      const before = new Set(fs.readdirSync(TEMP_UPLOAD_DIR));
+
+      const response = await request(app)
+        .patch(`/api/v1/partner/promotions/${promotionId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('image', Buffer.from('fake image'), 'huge.jpg')
+        .expect(422);
+
+      expect(response.body.error.code).toBe('FILE_TOO_LARGE');
+      expect(cloudinary.uploadImage).not.toHaveBeenCalled();
+      expect(newEntriesSince(before)).toEqual([]);
+    });
   });
 
   test('should list promotions for partner establishment', async () => {
