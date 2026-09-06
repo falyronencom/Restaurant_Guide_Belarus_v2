@@ -50,16 +50,18 @@ const SEARCH_SYNONYMS = {
 };
 
 /**
- * Helper: Build search conditions for text query.
- * Combines ILIKE on name/description/categories/cuisines with synonym expansion.
+ * Helper: OR-parts for a free-text search — ILIKE on name/description/
+ * categories/cuisines plus SEARCH_SYNONYMS expansion. Pushes its params and
+ * returns the parts with the next param index. Shared by the AND-ed `search`
+ * filter (addSearchConditions) and by the dish OR-alternative
+ * (addDishCondition).
  *
  * @param {string} search - User search text
- * @param {Array} conditions - Existing WHERE conditions array (mutated)
  * @param {Array} params - Existing params array (mutated)
  * @param {number} paramIndex - Current parameter index
- * @returns {number} Updated paramIndex
+ * @returns {{ orParts: string[], paramIndex: number }}
  */
-function addSearchConditions(search, conditions, params, paramIndex) {
+function buildSearchOrParts(search, params, paramIndex) {
   const searchLower = search.toLowerCase();
   const likePattern = `%${search}%`;
 
@@ -88,7 +90,92 @@ function addSearchConditions(search, conditions, params, paramIndex) {
     }
   }
 
+  return { orParts, paramIndex };
+}
+
+/**
+ * Helper: Build search conditions for text query.
+ * Combines ILIKE on name/description/categories/cuisines with synonym expansion.
+ *
+ * @param {string} search - User search text
+ * @param {Array} conditions - Existing WHERE conditions array (mutated)
+ * @param {Array} params - Existing params array (mutated)
+ * @param {number} paramIndex - Current parameter index
+ * @returns {number} Updated paramIndex
+ */
+function addSearchConditions(search, conditions, params, paramIndex) {
+  const { orParts, paramIndex: nextIndex } = buildSearchOrParts(search, params, paramIndex);
   conditions.push(`(${orParts.join(' OR ')})`);
+  return nextIndex;
+}
+
+/**
+ * Helper: Segment B dish-level filter via menu_items — one implementation for
+ * searchByRadius and searchWithoutLocation.
+ *
+ * EXISTS keeps establishments with at least one non-hidden menu item whose
+ * name OR menu section (category_raw) contains `dish`. The section matters:
+ * OCR'd menus name pizzas «Маргарита»/«Пепперони» under the section «Пицца»,
+ * so item_name alone found nothing for the most common dish query (prod,
+ * 07.09.2026). ILIKE folds Cyrillic case only under a non-C locale — verified
+ * on pg-test (en_US.utf8) and on prod through the public search API
+ * (`?search=СОРРЕНТО` finds «Сорренто»).
+ *
+ * When priceMaxByn is provided, either the regular price or an active,
+ * in-time-window promotion's discount price must satisfy the budget.
+ *
+ * `dishOrSearch` (optional) widens the condition to «menu match OR
+ * establishment-level free-text match» (ILIKE + SEARCH_SYNONYMS for that text,
+ * see buildSearchOrParts). Smart search passes the dish term itself when no
+ * budget was stated, so a pizzeria whose menu is not parsed yet still surfaces
+ * for «пицца». Callers that need strictly menu-verified rows (a price ceiling,
+ * the admin-hide flow) leave it out — `dish` alone stays strict.
+ *
+ * @param {{ dish: string, priceMaxByn: number|null, dishOrSearch: string|null }} dishFilter
+ * @param {Array} conditions - Existing WHERE conditions array (mutated)
+ * @param {Array} params - Existing params array (mutated)
+ * @param {number} paramIndex - Current parameter index
+ * @returns {number} Updated paramIndex
+ */
+function addDishCondition({ dish, priceMaxByn, dishOrSearch }, conditions, params, paramIndex) {
+  const dishParam = paramIndex++;
+  const priceParam = paramIndex++;
+  params.push(dish);
+  params.push(priceMaxByn);
+
+  const menuMatch = `EXISTS (
+      SELECT 1 FROM menu_items mi
+      WHERE mi.establishment_id = e.id
+        AND mi.is_hidden_by_admin = FALSE
+        AND (
+          mi.item_name ILIKE '%' || $${dishParam} || '%'
+          OR mi.category_raw ILIKE '%' || $${dishParam} || '%'
+        )
+        AND (
+          $${priceParam}::numeric IS NULL
+          OR mi.price_byn <= $${priceParam}::numeric
+          OR EXISTS (
+            SELECT 1 FROM promotions p
+            WHERE p.menu_item_id = mi.id
+              AND p.status = 'active'
+              AND p.valid_from <= CURRENT_DATE
+              AND (p.valid_until IS NULL OR p.valid_until >= CURRENT_DATE)
+              AND (p.valid_from_time IS NULL OR CURRENT_TIME >= p.valid_from_time)
+              AND (p.valid_until_time IS NULL OR CURRENT_TIME <= p.valid_until_time)
+              AND p.discount_price_byn IS NOT NULL
+              AND p.discount_price_byn <= $${priceParam}::numeric
+          )
+        )
+    )`;
+
+  if (dishOrSearch) {
+    const alternative = buildSearchOrParts(dishOrSearch, params, paramIndex);
+    paramIndex = alternative.paramIndex;
+    conditions.push(`(${menuMatch} OR ${alternative.orParts.join(' OR ')})`);
+  } else {
+    conditions.push(menuMatch);
+  }
+
   return paramIndex;
 }
 
@@ -236,6 +323,10 @@ async function enrichWithPromotions(establishments) {
  * @param {number} params.limit - Results per page (default: 20, max: 100)
  * @param {number} params.offset - Pagination offset (default: 0)
  * @param {string} params.sortBy - Sort order (distance, rating, price_asc, price_desc)
+ * @param {string} params.search - Free text: ILIKE on name/description/categories/cuisines + SEARCH_SYNONYMS (AND-ed)
+ * @param {string} params.dish - Dish/drink term matched against menu_items (item name OR menu section)
+ * @param {number} params.priceMaxByn - Budget ceiling for the dish in BYN (regular or active promo price)
+ * @param {string} params.dishOrSearch - Free text applied as an OR-alternative to the dish match (see addDishCondition)
  * @returns {Promise<Object>} Search results with establishments and pagination
  */
 export async function searchByRadius({
@@ -257,6 +348,7 @@ export async function searchByRadius({
   search = null,
   dish = null,
   priceMaxByn = null,
+  dishOrSearch = null,
 }) {
   // Validate coordinates (use strict null check to allow 0 values)
   if (latitude == null || longitude == null) {
@@ -410,36 +502,10 @@ export async function searchByRadius({
     paramIndex = addSearchConditions(search, conditions, params, paramIndex);
   }
 
-  // Segment B: dish-level filter via menu_items. EXISTS excludes establishments
-  // that have no matching, non-hidden menu_item. When priceMaxByn is provided,
-  // either the regular price or an active, in-time-window promotion's discount
-  // price must satisfy the budget.
+  // Segment B: dish-level filter via menu_items (name OR section, optional
+  // budget, optional OR-alternative) — see addDishCondition.
   if (dish) {
-    const dishParam = paramIndex++;
-    const priceParam = paramIndex++;
-    conditions.push(`EXISTS (
-      SELECT 1 FROM menu_items mi
-      WHERE mi.establishment_id = e.id
-        AND mi.is_hidden_by_admin = FALSE
-        AND mi.item_name ILIKE '%' || $${dishParam} || '%'
-        AND (
-          $${priceParam}::numeric IS NULL
-          OR mi.price_byn <= $${priceParam}::numeric
-          OR EXISTS (
-            SELECT 1 FROM promotions p
-            WHERE p.menu_item_id = mi.id
-              AND p.status = 'active'
-              AND p.valid_from <= CURRENT_DATE
-              AND (p.valid_until IS NULL OR p.valid_until >= CURRENT_DATE)
-              AND (p.valid_from_time IS NULL OR CURRENT_TIME >= p.valid_from_time)
-              AND (p.valid_until_time IS NULL OR CURRENT_TIME <= p.valid_until_time)
-              AND p.discount_price_byn IS NOT NULL
-              AND p.discount_price_byn <= $${priceParam}::numeric
-          )
-        )
-    )`);
-    params.push(dish);
-    params.push(priceMaxByn);
+    paramIndex = addDishCondition({ dish, priceMaxByn, dishOrSearch }, conditions, params, paramIndex);
   }
 
   const whereClause = conditions.join(' AND ');
@@ -577,6 +643,10 @@ export async function searchByRadius({
  * @param {number} params.limit - Results per page (default: 20, max: 100)
  * @param {number} params.offset - Pagination offset (default: 0)
  * @param {number} params.page - Page number for pagination metadata
+ * @param {string} params.search - Free text: ILIKE on name/description/categories/cuisines + SEARCH_SYNONYMS (AND-ed)
+ * @param {string} params.dish - Dish/drink term matched against menu_items (item name OR menu section)
+ * @param {number} params.priceMaxByn - Budget ceiling for the dish in BYN (regular or active promo price)
+ * @param {string} params.dishOrSearch - Free text applied as an OR-alternative to the dish match (see addDishCondition)
  * @returns {Promise<Object>} Search results sorted by rating
  */
 export async function searchWithoutLocation({
@@ -594,6 +664,7 @@ export async function searchWithoutLocation({
   search = null,
   dish = null,
   priceMaxByn = null,
+  dishOrSearch = null,
 }) {
   // Validate pagination. Max 500 to support /api/v1/public/establishments/map
   // (Brief 1 default 200, max 500). Mobile clients historically used max 100
@@ -729,34 +800,10 @@ export async function searchWithoutLocation({
     paramIndex = addSearchConditions(search, conditions, params, paramIndex);
   }
 
-  // Segment B: dish-level filter via menu_items. Same semantics as in
-  // searchByRadius — see that function for a full explanation.
+  // Segment B: dish-level filter via menu_items (name OR section, optional
+  // budget, optional OR-alternative) — see addDishCondition.
   if (dish) {
-    const dishParam = paramIndex++;
-    const priceParam = paramIndex++;
-    conditions.push(`EXISTS (
-      SELECT 1 FROM menu_items mi
-      WHERE mi.establishment_id = e.id
-        AND mi.is_hidden_by_admin = FALSE
-        AND mi.item_name ILIKE '%' || $${dishParam} || '%'
-        AND (
-          $${priceParam}::numeric IS NULL
-          OR mi.price_byn <= $${priceParam}::numeric
-          OR EXISTS (
-            SELECT 1 FROM promotions p
-            WHERE p.menu_item_id = mi.id
-              AND p.status = 'active'
-              AND p.valid_from <= CURRENT_DATE
-              AND (p.valid_until IS NULL OR p.valid_until >= CURRENT_DATE)
-              AND (p.valid_from_time IS NULL OR CURRENT_TIME >= p.valid_from_time)
-              AND (p.valid_until_time IS NULL OR CURRENT_TIME <= p.valid_until_time)
-              AND p.discount_price_byn IS NOT NULL
-              AND p.discount_price_byn <= $${priceParam}::numeric
-          )
-        )
-    )`);
-    params.push(dish);
-    params.push(priceMaxByn);
+    paramIndex = addDishCondition({ dish, priceMaxByn, dishOrSearch }, conditions, params, paramIndex);
   }
 
   const whereClause = conditions.join(' AND ');

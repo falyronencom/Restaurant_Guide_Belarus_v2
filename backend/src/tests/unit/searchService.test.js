@@ -26,6 +26,7 @@ const pool = (await import('../../config/database.js')).default;
 
 const {
   searchByRadius,
+  searchWithoutLocation,
   searchByBounds,
   checkSearchHealth,
 } = await import('../../services/searchService.js');
@@ -386,6 +387,77 @@ describe('searchService', () => {
 
       const params = pool.query.mock.calls[0][1];
       expect(params[0]).toBe('active');
+    });
+  });
+
+  describe('dish filter via menu_items — category_raw + OR-alternative (prod defect 07.09.2026)', () => {
+    const validParams = {
+      latitude: 53.9,
+      longitude: 27.5,
+      radius: 10,
+    };
+
+    beforeEach(() => {
+      pool.query.mockResolvedValue({ rows: [{ total: '0' }], rowCount: 1 });
+    });
+
+    test('searchByRadius: dish matches the menu section (category_raw), not only item_name', async () => {
+      await searchByRadius({ ...validParams, dish: 'пицца' });
+
+      const [query, params] = pool.query.mock.calls[0];
+      expect(query).toContain("mi.item_name ILIKE '%' || $");
+      expect(query).toContain("mi.category_raw ILIKE '%' || $");
+      expect(params).toContain('пицца');
+    });
+
+    test('searchWithoutLocation: dish matches the menu section (category_raw), not only item_name', async () => {
+      await searchWithoutLocation({ dish: 'пицца' });
+
+      const [query, params] = pool.query.mock.calls[0];
+      expect(query).toContain("mi.item_name ILIKE '%' || $");
+      expect(query).toContain("mi.category_raw ILIKE '%' || $");
+      expect(params).toContain('пицца');
+    });
+
+    test('dish alone stays strict: no establishment-level ILIKE, no synonym expansion', async () => {
+      await searchWithoutLocation({ dish: 'пицца' });
+
+      const [query, params] = pool.query.mock.calls[0];
+      expect(query).not.toContain('e.name ILIKE');
+      expect(params).not.toContainEqual(['Итальянская']);
+    });
+
+    test('dishOrSearch: menu match OR establishment ILIKE + SEARCH_SYNONYMS, glued to the EXISTS (not AND-ed), in main and count queries', async () => {
+      await searchWithoutLocation({ dish: 'пицца', dishOrSearch: 'пицца' });
+
+      const [query, params] = pool.query.mock.calls[0];
+      const [countQuery, countParams] = pool.query.mock.calls[1];
+
+      for (const q of [query, countQuery]) {
+        const idx = q.indexOf('e.name ILIKE');
+        expect(idx).toBeGreaterThan(-1);
+        // Immediately before the establishment-level ILIKE must come the closing
+        // paren of the EXISTS and an OR — the alternative widens, never narrows.
+        expect(q.slice(0, idx).trimEnd()).toMatch(/\)\s*OR$/);
+        expect(q).toContain('e.categories && $');
+        expect(q).toContain('e.cuisines && $');
+      }
+      expect(params).toContain('пицца');
+      expect(params).toContain('%пицца%');
+      expect(params).toContainEqual(['Пиццерия']);
+      expect(params).toContainEqual(['Итальянская']);
+      // count query reuses the same WHERE params minus LIMIT/OFFSET
+      expect(countParams).toEqual(params.slice(0, -2));
+    });
+
+    test('searchByRadius honours dishOrSearch the same way', async () => {
+      await searchByRadius({ ...validParams, dish: 'пицца', dishOrSearch: 'пицца' });
+
+      const [query, params] = pool.query.mock.calls[0];
+      const idx = query.indexOf('e.name ILIKE');
+      expect(idx).toBeGreaterThan(-1);
+      expect(query.slice(0, idx).trimEnd()).toMatch(/\)\s*OR$/);
+      expect(params).toContainEqual(['Итальянская']);
     });
   });
 

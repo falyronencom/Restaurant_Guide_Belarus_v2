@@ -236,9 +236,20 @@ export function buildSmartSearchFilters(intent, context = {}) {
     filters.cuisines = intent.cuisine;
   }
 
-  // Dish (Segment B): routes the query to menu_items JOIN in searchService.
+  // Dish (Segment B): routes the query to the menu_items EXISTS in searchService
+  // (item name OR menu section). Without a stated budget the dish term also
+  // rides as an OR-alternative at establishment level (ILIKE + SEARCH_SYNONYMS
+  // via `dishOrSearch`): a pizzeria whose menu is not parsed yet still surfaces
+  // for «пицца», and for the same word — absent other intent filters
+  // (category/cuisine/location/city still AND-narrow) — the smart path never
+  // finds less than the classic ?search= path. With a budget (price_max) the
+  // match must be menu-verified — the user asked for a price we can only read
+  // from a menu.
   if (intent.dish) {
     filters.dish = intent.dish;
+    if (intent.price_max == null) {
+      filters.dishOrSearch = intent.dish;
+    }
   }
 
   // Price mapping:
@@ -272,8 +283,15 @@ export function buildSmartSearchFilters(intent, context = {}) {
     filters.city = context.city;
   }
 
-  // Tags → search text for existing ILIKE + SEARCH_SYNONYMS
-  if (intent.tags && intent.tags.length > 0) {
+  // Tags → search text for existing ILIKE + SEARCH_SYNONYMS — only without a
+  // dish. The parser restates the dish word in tags ("пицца" → dish="пицца",
+  // tags=["пицца"]); as an establishment-level filter AND-ed with the menu
+  // match it returned zero rows for every dish outside SEARCH_SYNONYMS
+  // («капучино») — prod, 07.09.2026. With a dish, tags are dropped rather than
+  // AND-ed — accepting the loss of the rare non-dish tag («терраса») instead of
+  // keeping a filter that zeroes the common case; joined multi-tag patterns
+  // («пицца терраса») matched nothing anyway.
+  if (!intent.dish && intent.tags && intent.tags.length > 0) {
     filters.search = intent.tags.join(' ');
   }
 

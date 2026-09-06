@@ -13,6 +13,7 @@
  * - End-to-end search with parsed intent
  */
 
+import crypto from 'crypto';
 import request from 'supertest';
 import app from '../../server.js';
 import { clearAllData, query } from '../utils/database.js';
@@ -427,5 +428,145 @@ describe('Smart Search - Caching', () => {
   test('getCachedIntent returns null for missing key', async () => {
     const cached = await smartSearchService.getCachedIntent('nonexistent_hash');
     expect(cached).toBeNull();
+  });
+});
+
+// ─── Dish path: AI intent replayed from the Redis cache ──────────────────────
+//
+// Prod defect 07.09.2026 (20 Minsk establishments with parsed menus):
+// POST /search/smart «пицца» → intent {dish:"пицца", tags:["пицца"]} → total 0,
+// while GET /search/establishments?search=пицца found 2 (SEARCH_SYNONYMS).
+// Two causes: (1) tags became an establishment-level ILIKE AND-ed with the
+// menu_items EXISTS; (2) the EXISTS matched item_name only — pizzas are named
+// «Маргарита», the menu section (category_raw) is «Пицца».
+//
+// OpenRouter is unavailable in tests, so the AI path is reached the way prod
+// reaches it on a cache hit: the parsed intent is seeded under the key
+// executeSmartSearch derives (smartsearch:<sha256(normalized query)[0..32)>).
+// Redis is a hard requirement here (local redis-test, CI service): a missing
+// Redis must fail these tests, not skip them.
+
+function intentCacheHash(queryText) {
+  // Mirrors normalizeQuery() + generateQueryHash() in smartSearchService.js
+  const normalized = queryText.toLowerCase().trim().replace(/\s+/g, ' ');
+  return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 32);
+}
+
+function dishIntent(dish, extra = {}) {
+  return {
+    cuisine: null, category: null, dish, meal_type: null, price_max: null,
+    location: null, sort: null, tags: [dish], error: null, ...extra,
+  };
+}
+
+describe('Smart Search - Dish path (intent replayed from cache)', () => {
+  const seededHashes = new Set();
+
+  beforeAll(async () => {
+    if (!redisClient.isOpen) {
+      await connectRedis();
+    }
+  });
+
+  afterAll(async () => {
+    for (const hash of seededHashes) {
+      await deleteKey(`smartsearch:${hash}`).catch(() => {});
+    }
+  });
+
+  beforeEach(async () => {
+    // 5: plain café — no synonym; name/description/categories/cuisines carry
+    // neither «пицц» nor «капучино». Only its parsed menu can match.
+    const est = await query(`
+      INSERT INTO establishments (id, partner_id, name, slug, description, city, address, latitude, longitude, categories, cuisines, status, working_hours, price_range, created_at, updated_at)
+      VALUES (gen_random_uuid(), $1, 'Тестовое кафе', gen_random_uuid()::text, 'Обычное кафе без подсказок в описании', 'Минск', 'ул. Тестовая 7', 53.93, 27.6, ARRAY['Кафе'], ARRAY['Европейская'], 'active', $2::jsonb, '$$', NOW(), NOW())
+      RETURNING id
+    `, [partnerId, defaultWorkingHours]);
+    const estId = est.rows[0].id;
+    const media = await query(
+      `INSERT INTO establishment_media
+         (establishment_id, type, file_type, url, thumbnail_url, preview_url)
+       VALUES ($1, 'menu', 'pdf', 'http://test/menu.pdf', 'http://test/t.png', 'http://test/p.png')
+       RETURNING id`,
+      [estId],
+    );
+    const mediaId = media.rows[0].id;
+    await query(
+      `INSERT INTO menu_items (establishment_id, media_id, item_name, price_byn, category_raw, is_hidden_by_admin, position)
+       VALUES ($1, $2, 'Маргарита', 18.00, 'Пицца', FALSE, 0),
+              ($1, $2, 'Пепперони', 12.00, 'Пицца', TRUE, 1),
+              ($1, $2, 'КАПУЧИНО', 6.50, 'Напитки', FALSE, 2)`,
+      [estId, mediaId],
+    );
+  });
+
+  async function seedIntent(queryText, intent) {
+    expect(redisClient.isOpen).toBe(true);
+    const hash = intentCacheHash(queryText);
+    seededHashes.add(hash);
+    await smartSearchService.cacheIntent(hash, intent, 60);
+    // Prove the seed landed — otherwise the request would silently take the
+    // fallback path and the assertions below would test the wrong thing.
+    expect(await smartSearchService.getCachedIntent(hash)).toEqual(intent);
+  }
+
+  test('environment guard: ILIKE folds Cyrillic case in the test database', async () => {
+    const r = await query(`SELECT 'КАПУЧИНО' ILIKE '%капучино%' AS folded`);
+    expect(r.rows[0].folded).toBe(true);
+  });
+
+  test('«пицца»: menu section «Пицца» (category_raw) finds the café; synonyms keep the Italian place — and nothing else', async () => {
+    await seedIntent('пицца', dishIntent('пицца'));
+
+    const response = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'пицца', city: 'Минск' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.fallback).toBe(false);
+    expect(response.body.data.intent.dish).toBe('пицца');
+    const names = response.body.data.establishments.map(e => e.name).sort();
+    expect(names).toEqual(['Итальяно', 'Тестовое кафе']);
+    expect(response.body.data.pagination.total).toBe(2);
+  });
+
+  test('«капучино»: a dish outside SEARCH_SYNONYMS is found through item_name (case-insensitive) — tags no longer AND-filter the establishment', async () => {
+    await seedIntent('капучино', dishIntent('капучино'));
+
+    const response = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'капучино', city: 'Минск' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.fallback).toBe(false);
+    const names = response.body.data.establishments.map(e => e.name);
+    expect(names).toEqual(['Тестовое кафе']);
+  });
+
+  test('«пицца до 20 рублей»: budget is checked against the menu (Маргарита 18 ≤ 20); unverified synonym matches are excluded', async () => {
+    await seedIntent('пицца до 20 рублей', dishIntent('пицца', { price_max: 20 }));
+
+    const response = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'пицца до 20 рублей', city: 'Минск' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.fallback).toBe(false);
+    expect(response.body.data.intent.price_max).toBe(20);
+    const names = response.body.data.establishments.map(e => e.name);
+    expect(names).toEqual(['Тестовое кафе']);
+  });
+
+  test('«пицца до 15 рублей»: over-budget (18) and admin-hidden (12) items do not count; no synonym fallback under a budget → empty', async () => {
+    await seedIntent('пицца до 15 рублей', dishIntent('пицца', { price_max: 15 }));
+
+    const response = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'пицца до 15 рублей', city: 'Минск' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.fallback).toBe(false);
+    expect(response.body.data.establishments).toEqual([]);
+    expect(response.body.data.pagination.total).toBe(0);
   });
 });

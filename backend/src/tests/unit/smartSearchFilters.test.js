@@ -142,3 +142,51 @@ describe('buildSmartSearchFilters — price routing with/without dish', () => {
     expect(filters.priceRange).toBeUndefined();
   });
 });
+
+describe('buildSmartSearchFilters — tags alongside dish (prod defect 07.09.2026)', () => {
+  // The parser restates the dish word in tags ("пицца" → dish="пицца",
+  // tags=["пицца"]). Until the fix, tags became `filters.search` — an
+  // establishment-level ILIKE AND-ed with the menu_items EXISTS — so any dish
+  // outside SEARCH_SYNONYMS ("капучино") returned zero rows.
+  const base = {
+    category: null,
+    cuisine: null,
+    price_max: null,
+    meal_type: null,
+    location: null,
+    sort: null,
+    error: null,
+  };
+
+  test('with dish, tags are NOT applied as establishment-level search (no AND filter)', () => {
+    const filters = buildSmartSearchFilters({ ...base, dish: 'капучино', tags: ['капучино'] });
+
+    expect(filters.dish).toBe('капучино');
+    expect(filters.search).toBeUndefined();
+  });
+
+  test('with dish and no budget, the dish term rides as an OR-alternative (dishOrSearch)', () => {
+    const filters = buildSmartSearchFilters({ ...base, dish: 'пицца', tags: ['пицца'] });
+
+    expect(filters.dish).toBe('пицца');
+    expect(filters.dishOrSearch).toBe('пицца');
+    expect(filters.search).toBeUndefined();
+  });
+
+  test('with dish and price_max, no OR-alternative: a stated budget needs a menu-verified match', () => {
+    const filters = buildSmartSearchFilters({ ...base, dish: 'пицца', tags: ['пицца'], price_max: 20 });
+
+    expect(filters.dish).toBe('пицца');
+    expect(filters.priceMaxByn).toBe(20);
+    expect(filters.dishOrSearch).toBeUndefined();
+    expect(filters.search).toBeUndefined();
+  });
+
+  test('without dish, tags still become the legacy search text (unchanged path)', () => {
+    const filters = buildSmartSearchFilters({ ...base, dish: null, tags: ['терраса', 'wifi'] });
+
+    expect(filters.search).toBe('терраса wifi');
+    expect(filters.dish).toBeUndefined();
+    expect(filters.dishOrSearch).toBeUndefined();
+  });
+});
