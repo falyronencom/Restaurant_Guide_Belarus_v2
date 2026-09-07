@@ -11,6 +11,7 @@ import * as MediaModel from '../models/mediaModel.js';
 import * as EstablishmentModel from '../models/establishmentModel.js';
 import * as PromotionModel from '../models/promotionModel.js';
 import logger from '../utils/logger.js';
+import { expandCityForQuery } from '../constants/urlSlugs.js';
 import {
   toPublicEstablishment,
   toPublicEstablishmentListing,
@@ -385,13 +386,20 @@ export async function searchByRadius({
   // Add city filter (supports single string or array — array used by public
   // catalog for Mogilev ё/е expansion, where two Cyrillic variants must match)
   if (city) {
-    if (Array.isArray(city)) {
-      conditions.push(`e.city = ANY($${paramIndex}::varchar[])`);
-      params.push(city);
-    } else {
-      conditions.push(`e.city = $${paramIndex}`);
-      params.push(city);
-    }
+    // Могилёв канонически пишется И через «ё», И через «е»: оба написания
+    // принимает валидация (VALID_CITIES), а сравнение здесь точное. Клиент,
+    // приславший одно написание, не увидел бы карточек, записанных другим —
+    // и отказ был бы молчаливым: приложение честно ответит, что в городе
+    // ничего нет. Разворачиваем тем же помощником, которым это уже закрыто
+    // в публичном каталоге (publicService) и в меню (menuItemModel).
+    // Точка выбрана здесь, а не в контроллерах: через эту ветку идут ОБА
+    // мобильных пути — /search/establishments и /search/smart, где город
+    // может прийти ещё и из разбора запроса моделью.
+    const variants = Array.isArray(city)
+      ? city.flatMap(expandCityForQuery)
+      : expandCityForQuery(city);
+    conditions.push(`e.city = ANY($${paramIndex}::varchar[])`);
+    params.push(variants);
     paramIndex++;
   }
 
@@ -688,13 +696,20 @@ export async function searchWithoutLocation({
 
   // Add city filter (supports single string or array — see searchByRadius note)
   if (city) {
-    if (Array.isArray(city)) {
-      conditions.push(`e.city = ANY($${paramIndex}::varchar[])`);
-      params.push(city);
-    } else {
-      conditions.push(`e.city = $${paramIndex}`);
-      params.push(city);
-    }
+    // Могилёв канонически пишется И через «ё», И через «е»: оба написания
+    // принимает валидация (VALID_CITIES), а сравнение здесь точное. Клиент,
+    // приславший одно написание, не увидел бы карточек, записанных другим —
+    // и отказ был бы молчаливым: приложение честно ответит, что в городе
+    // ничего нет. Разворачиваем тем же помощником, которым это уже закрыто
+    // в публичном каталоге (publicService) и в меню (menuItemModel).
+    // Точка выбрана здесь, а не в контроллерах: через эту ветку идут ОБА
+    // мобильных пути — /search/establishments и /search/smart, где город
+    // может прийти ещё и из разбора запроса моделью.
+    const variants = Array.isArray(city)
+      ? city.flatMap(expandCityForQuery)
+      : expandCityForQuery(city);
+    conditions.push(`e.city = ANY($${paramIndex}::varchar[])`);
+    params.push(variants);
     paramIndex++;
   }
 

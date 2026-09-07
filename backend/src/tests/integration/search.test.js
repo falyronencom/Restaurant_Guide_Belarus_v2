@@ -587,3 +587,80 @@ describe('Search System - Public Projection (fix-in-place, Brief 1)', () => {
     expect(response.body.data.status).toBe('active');
   });
 });
+
+describe('Search System - Могилёв: два написания одного города', () => {
+  // Валидация принимает ОБА написания (VALID_CITIES несёт и «Могилев», и
+  // «Могилёв»), поэтому в базе законно оказываются оба. Сравнение города в
+  // поиске точное, и без разворота в набор вариантов клиент, приславший одно
+  // написание, не увидел бы половину города. Отказ молчаливый: приложение
+  // честно отвечает, что заведений нет.
+  //
+  // Публичный каталог это уже закрывал через expandCityForQuery; мобильный
+  // путь (/search/establishments и /search/smart) шёл мимо.
+  beforeEach(async () => {
+    await query(`
+      INSERT INTO establishments (id, partner_id, name, slug, description, city, address, latitude, longitude, categories, cuisines, status, working_hours, price_range, created_at, updated_at)
+      VALUES (gen_random_uuid(), $1, 'Через Ё', gen_random_uuid()::text, 'ё', 'Могилёв', 'Ленинская 1', 53.91, 30.35, ARRAY['Ресторан'], ARRAY['Народная'], 'active', $2::jsonb, '$$', NOW(), NOW())
+    `, [partnerId, defaultWorkingHours]);
+
+    await query(`
+      INSERT INTO establishments (id, partner_id, name, slug, description, city, address, latitude, longitude, categories, cuisines, status, working_hours, price_range, created_at, updated_at)
+      VALUES (gen_random_uuid(), $1, 'Через Е', gen_random_uuid()::text, 'е', 'Могилев', 'Ленинская 2', 53.92, 30.36, ARRAY['Ресторан'], ARRAY['Народная'], 'active', $2::jsonb, '$$', NOW(), NOW())
+    `, [partnerId, defaultWorkingHours]);
+
+    // Соседний город: доказывает, что разворот не превратился в «показать всё».
+    await query(`
+      INSERT INTO establishments (id, partner_id, name, slug, description, city, address, latitude, longitude, categories, cuisines, status, working_hours, price_range, created_at, updated_at)
+      VALUES (gen_random_uuid(), $1, 'Не Могилёв', gen_random_uuid()::text, 'др', 'Минск', 'Минская 3', 53.90, 27.50, ARRAY['Ресторан'], ARRAY['Народная'], 'active', $2::jsonb, '$$', NOW(), NOW())
+    `, [partnerId, defaultWorkingHours]);
+  });
+
+  test('запрос через «ё» находит и карточку, записанную через «е»', async () => {
+    const response = await request(app)
+      .get('/api/v1/search/establishments')
+      .query({ city: 'Могилёв' })
+      .expect(200);
+
+    // Множество, а не отсортированный список: `.sort()` в JS сравнивает коды
+    // символов, и «Ё» (U+0401) встаёт перед «Е» (U+0415). Порядок выдачи тут
+    // не предмет проверки — предмет в том, что найдены ОБА написания.
+    const names = new Set(response.body.data.establishments.map((e) => e.name));
+    expect(names).toEqual(new Set(['Через Е', 'Через Ё']));
+  });
+
+  test('запрос через «е» находит и карточку, записанную через «ё»', async () => {
+    const response = await request(app)
+      .get('/api/v1/search/establishments')
+      .query({ city: 'Могилев' })
+      .expect(200);
+
+    // Множество, а не отсортированный список: `.sort()` в JS сравнивает коды
+    // символов, и «Ё» (U+0401) встаёт перед «Е» (U+0415). Порядок выдачи тут
+    // не предмет проверки — предмет в том, что найдены ОБА написания.
+    const names = new Set(response.body.data.establishments.map((e) => e.name));
+    expect(names).toEqual(new Set(['Через Е', 'Через Ё']));
+  });
+
+  test('разворот не расширяет выдачу на другие города', async () => {
+    // Без этой проверки мутация «отдавать все города» прошла бы зелёной:
+    // обе проверки выше смотрят только на то, что нужное НАЙДЕНО.
+    const response = await request(app)
+      .get('/api/v1/search/establishments')
+      .query({ city: 'Могилёв' })
+      .expect(200);
+
+    const names = response.body.data.establishments.map((e) => e.name);
+    expect(names).not.toContain('Не Могилёв');
+    expect(response.body.data.pagination.total).toBe(2);
+  });
+
+  test('обычный город разворотом не затронут', async () => {
+    const response = await request(app)
+      .get('/api/v1/search/establishments')
+      .query({ city: 'Минск' })
+      .expect(200);
+
+    const names = response.body.data.establishments.map((e) => e.name);
+    expect(names).toEqual(['Не Могилёв']);
+  });
+});
