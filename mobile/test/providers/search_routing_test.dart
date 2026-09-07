@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:restaurant_guide_mobile/models/filter_options.dart';
 import 'package:restaurant_guide_mobile/providers/establishments_provider.dart';
+import 'package:restaurant_guide_mobile/providers/smart_search_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/wire_fixtures.dart';
@@ -341,6 +342,90 @@ void main() {
       await provider.searchEstablishments();
 
       expect(provider.error, 'An error occurred. Please try again.');
+    });
+  });  group('Превью главной и список считают по одним фильтрам', () {
+    /// Ставит на провайдере тот набор фильтров, который пользователь мог
+    /// выставить на `/filter`, и возвращает его же.
+    EstablishmentsProvider withFilters() {
+      final provider = EstablishmentsProvider();
+      provider.setCity('Минск');
+      provider.setPriceFilters({PriceRange.medium});
+      provider.setHoursFilter(HoursFilter.until22);
+      provider.toggleCategoryFilter('Кофейня');
+      provider.toggleCuisineFilter('Итальянская');
+      provider.toggleAmenityFilter('wifi');
+      return provider;
+    }
+
+    test('превью шлёт фильтры экрана, а не только фразу', () async {
+      // До 07.09 превью получало лишь фразу, координаты и город: бейдж на
+      // главной показывал «фильтров: 4», превью считалось без них, и кнопка
+      // «Показать все (N)» обещала N, которого на следующем экране не было.
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final est = withFilters();
+      await SmartSearchProvider()
+          .executeSmartSearch('капучино', filters: est.screenFilters);
+
+      final body = bodyOf(adapter.requests.single);
+      expect(adapter.requests.single.path, '/api/v1/search/smart');
+      expect(body['city'], 'Минск');
+      expect(body['priceRange'], [PriceRange.medium.apiValue]);
+      expect(body['hours_filter'], HoursFilter.until22.apiValue);
+      expect(body['categories'], ['Кофейня']);
+      expect(body['cuisines'], ['Итальянская']);
+      expect(body['features'], ['wifi']);
+    });
+
+    test('превью и список несут ОДИН набор фильтров', () async {
+      // Главная проверка этой правки: не «превью что-то шлёт», а «шлёт ровно
+      // то же». Новая размерность, доехавшая до одного вызова и потерянная в
+      // другом, снова разведёт счётчик N и состав следующего экрана.
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final est = withFilters();
+      await SmartSearchProvider()
+          .executeSmartSearch('капучино', filters: est.screenFilters);
+
+      est.setSearchQuery('капучино');
+      await est.searchEstablishments();
+
+      expect(adapter.requests, hasLength(2));
+      const dimensions = [
+        'city', 'categories', 'cuisines', 'priceRange',
+        'hours_filter', 'features', 'sort_by', 'max_distance',
+      ];
+      final preview = bodyOf(adapter.requests.first);
+      final list = bodyOf(adapter.requests.last);
+      for (final key in dimensions) {
+        expect(preview[key], list[key], reason: 'размерность $key разошлась');
+      }
+      // Отличаться им положено только размером страницы.
+      expect(preview['limit'], 3);
+      expect(list['limit'], 20);
+    });
+
+    test('превью тоже не шлёт сортировку, которую не выбирали', () async {
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final est = EstablishmentsProvider();
+      await SmartSearchProvider()
+          .executeSmartSearch('кофе', filters: est.screenFilters);
+
+      expect(bodyOf(adapter.requests.single).containsKey('sort_by'), isFalse);
+    });
+
+    test('выбранная сортировка доезжает и до превью', () async {
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final est = EstablishmentsProvider();
+      est.setSort(SortOption.priceAsc);
+      await pumpEventQueue();
+
+      await SmartSearchProvider()
+          .executeSmartSearch('кофе', filters: est.screenFilters);
+
+      expect(bodyOf(adapter.requests.last)['sort_by'], 'price_asc');
     });
   });
 }

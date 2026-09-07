@@ -194,6 +194,36 @@ class EstablishmentsProvider with ChangeNotifier {
   double? get userLongitude => _userLongitude;
   bool get hasRealLocation => _userLatitude != null && _userLongitude != null;
 
+  /// Фильтры экрана одним набором — единственное место, где они
+  /// собираются. Ими пользуются и собственный поиск провайдера, и превью
+  /// умного поиска на главной; иначе новый фильтр доедет до одного вызова
+  /// и потеряется в другом. / The single place the screen's filters are
+  /// assembled; both the provider's own search and the home preview read
+  /// them from here.
+  ScreenFilters get screenFilters {
+    // Без GPS сортировка по расстоянию невозможна — откатываемся на рейтинг.
+    final effectiveSort =
+        (!hasRealLocation && _currentSort == SortOption.distance)
+            ? SortOption.rating
+            : _currentSort;
+
+    return ScreenFilters(
+      city: _selectedCity,
+      categories:
+          _categoryFilters.isNotEmpty ? _categoryFilters.toList() : null,
+      cuisines: _cuisineFilters.isNotEmpty ? _cuisineFilters.toList() : null,
+      priceRanges: _priceFilters.isNotEmpty
+          ? _priceFilters.map((p) => p.apiValue).toList()
+          : null,
+      maxDistance:
+          hasRealLocation ? _distanceFilter.toMeters()?.toDouble() : null,
+      sortBy: effectiveSort.toApiValue(),
+      sortTouched: _sortTouched,
+      hoursFilter: _hoursFilter?.apiValue,
+      features: _amenityFilters.isNotEmpty ? _amenityFilters.toList() : null,
+    );
+  }
+
   /// Whether any filters are active
   bool get hasActiveFilters {
     return _selectedCity != null ||
@@ -276,22 +306,7 @@ class EstablishmentsProvider with ChangeNotifier {
       final latitude = _userLatitude;
       final longitude = _userLongitude;
 
-      // If no GPS and distance sort selected, fall back to rating
-      final effectiveSort = (!hasRealLocation && _currentSort == SortOption.distance)
-          ? SortOption.rating
-          : _currentSort;
-
-      final categories =
-          _categoryFilters.isNotEmpty ? _categoryFilters.toList() : null;
-      final cuisines =
-          _cuisineFilters.isNotEmpty ? _cuisineFilters.toList() : null;
-      final priceRanges = _priceFilters.isNotEmpty
-          ? _priceFilters.map((p) => p.apiValue).toList()
-          : null;
-      final maxDistance =
-          hasRealLocation ? _distanceFilter.toMeters()?.toDouble() : null;
-      final features =
-          _amenityFilters.isNotEmpty ? _amenityFilters.toList() : null;
+      final f = screenFilters;
 
       // Один движок для текста. Пока в строке есть фраза, выдачу собирает
       // умный поиск: он разбирает её по меню, синонимам и бюджету. Пустая
@@ -305,14 +320,14 @@ class EstablishmentsProvider with ChangeNotifier {
           query: queryText,
           latitude: latitude,
           longitude: longitude,
-          city: _selectedCity,
-          categories: categories,
-          cuisines: cuisines,
-          priceRanges: priceRanges,
-          maxDistance: maxDistance,
-          sortBy: _sortTouched ? effectiveSort.toApiValue() : null,
-          hoursFilter: _hoursFilter?.apiValue,
-          features: features,
+          city: f.city,
+          categories: f.categories,
+          cuisines: f.cuisines,
+          priceRanges: f.priceRanges,
+          maxDistance: f.maxDistance,
+          sortBy: f.explicitSortBy,
+          hoursFilter: f.hoursFilter,
+          features: f.features,
           page: page,
           limit: _pageSize,
         );
@@ -333,17 +348,19 @@ class EstablishmentsProvider with ChangeNotifier {
         result = await _service.searchEstablishments(
           page: page,
           perPage: _pageSize,
-          city: _selectedCity,
-          categories: categories,
-          cuisines: cuisines,
-          priceRanges: priceRanges,
+          city: f.city,
+          categories: f.categories,
+          cuisines: f.cuisines,
+          priceRanges: f.priceRanges,
           latitude: latitude,
           longitude: longitude,
-          maxDistance: maxDistance,
+          maxDistance: f.maxDistance,
           search: null,
-          sortBy: effectiveSort.toApiValue(),
-          hoursFilter: _hoursFilter?.apiValue,
-          features: features,
+          // Классике сортировка уходит всегда: выведенной из фразы там нет,
+          // спорить не с чем, и порядок обязан совпадать с надписью контрола.
+          sortBy: f.sortBy,
+          hoursFilter: f.hoursFilter,
+          features: f.features,
         );
       }
 

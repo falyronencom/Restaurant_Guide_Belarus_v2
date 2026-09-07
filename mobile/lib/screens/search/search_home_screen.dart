@@ -354,7 +354,7 @@ class _SearchHomeScreenState extends State<SearchHomeScreen> {
       query,
       latitude: estProvider.userLatitude,
       longitude: estProvider.userLongitude,
-      city: estProvider.selectedCity,
+      filters: estProvider.screenFilters,
     );
   }
 

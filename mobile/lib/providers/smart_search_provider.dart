@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_mobile/models/establishment.dart';
+import 'package:restaurant_guide_mobile/models/filter_options.dart';
 import 'package:restaurant_guide_mobile/services/smart_search_service.dart';
 
 /// Smart search states
@@ -29,12 +30,18 @@ class SmartSearchProvider extends ChangeNotifier {
   bool get hasResults => _state == SmartSearchState.results && _smartResults.isNotEmpty;
 
   /// Execute smart search with AI intent parsing.
-  /// Coordinates and city are passed from caller (home screen reads from EstablishmentsProvider).
+  ///
+  /// Координаты и фильтры экрана приходят от вызывающего: они живут в
+  /// `EstablishmentsProvider` и общие для приложения. Превью ОБЯЗАНО считаться
+  /// с ними — иначе «Показать все (N)» обещает N, посчитанное без фильтров, а
+  /// следующий экран их применяет и показывает меньше. / The screen's filters
+  /// live in EstablishmentsProvider and must reach the preview too, or the
+  /// "show all (N)" count promises a number the next screen will not deliver.
   Future<void> executeSmartSearch(
     String query, {
     double? latitude,
     double? longitude,
-    String? city,
+    ScreenFilters? filters,
   }) async {
     if (query.trim().isEmpty) return;
 
@@ -48,7 +55,16 @@ class SmartSearchProvider extends ChangeNotifier {
         query: _lastQuery,
         latitude: latitude,
         longitude: longitude,
-        city: city,
+        city: filters?.city,
+        categories: filters?.categories,
+        cuisines: filters?.cuisines,
+        priceRanges: filters?.priceRanges,
+        maxDistance: filters?.maxDistance,
+        // Та же оговорка, что на экране результатов: сортировка уходит только
+        // выбранная человеком, иначе умолчание побьёт сортировку из фразы.
+        sortBy: filters?.explicitSortBy,
+        hoursFilter: filters?.hoursFilter,
+        features: filters?.features,
         limit: 3,
       );
 

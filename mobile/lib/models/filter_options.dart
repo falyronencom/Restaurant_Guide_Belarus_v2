@@ -189,3 +189,48 @@ class FilterConstants {
   /// Get all amenity labels
   static List<String> get amenityLabels => amenities.values.toList();
 }
+
+/// Фильтры экрана в том виде, в каком их принимает API.
+///
+/// Собираются в ОДНОМ месте — [EstablishmentsProvider.screenFilters] — и
+/// расходятся оттуда во все запросы: список по фильтрам, умный поиск на экране
+/// результатов и превью на главной. Пока каждый вызов собирал их сам, превью
+/// главной осталось без фильтров вовсе: бейдж на экране показывал «3 фильтра»,
+/// превью считалось без них, а «Показать все (N)» обещало N, которого на
+/// следующем экране уже не было. Один источник — один набор. / One place
+/// collects the screen's filters; every request reads them from here, so a new
+/// dimension cannot reach one call site and miss another.
+class ScreenFilters {
+  const ScreenFilters({
+    this.city,
+    this.categories,
+    this.cuisines,
+    this.priceRanges,
+    this.maxDistance,
+    this.sortBy,
+    this.sortTouched = false,
+    this.hoursFilter,
+    this.features,
+  });
+
+  final String? city;
+  final List<String>? categories;
+  final List<String>? cuisines;
+  final List<String>? priceRanges;
+
+  /// Метры — так их принимает `max_distance`
+  final double? maxDistance;
+
+  /// Действующая сортировка (уже в значениях API)
+  final String? sortBy;
+
+  /// Выбрал ли сортировку пользователь САМ. Умному поиску сортировка уходит
+  /// только тогда: иначе умолчание побило бы сортировку, выведенную из фразы.
+  final bool sortTouched;
+
+  final String? hoursFilter;
+  final List<String>? features;
+
+  /// Сортировка для умного поиска: только выбранная человеком.
+  String? get explicitSortBy => sortTouched ? sortBy : null;
+}
