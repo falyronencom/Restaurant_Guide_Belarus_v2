@@ -233,16 +233,29 @@ class Establishment {
     return null;
   }
 
-  /// Get today's parsed working hours
-  Map<String, dynamic>? get todayHours {
+  /// Часы работы на КОНКРЕТНЫЙ момент — чистая функция от [moment].
+  ///
+  /// Вынесено из `todayHours` ради проверяемости: пока единственным
+  /// источником времени был `DateTime.now()`, ветку «через полночь» нельзя
+  /// было проверить иначе как подгонкой ожидания под часы машины, а это
+  /// вычисляемое ожидание и флейк на границе суток.
+  Map<String, dynamic>? hoursAt(DateTime moment) {
     if (workingHours == null) return null;
-    final dayKey = _dayKeys[DateTime.now().weekday - 1];
+    final dayKey = _dayKeys[moment.weekday - 1];
     return parseDayHours(workingHours![dayKey]);
   }
 
-  /// Check if establishment is currently open based on working hours
-  bool get isCurrentlyOpen {
-    final hours = todayHours;
+  /// Get today's parsed working hours
+  Map<String, dynamic>? get todayHours => hoursAt(DateTime.now());
+
+  /// Открыто ли заведение в КОНКРЕТНЫЙ момент.
+  ///
+  /// Момент один на весь расчёт — и для выбора дня недели, и для минут.
+  /// Прежняя версия звала `DateTime.now()` дважды (через `todayHours` и
+  /// отдельно), поэтому ровно в полночь могла взять день до перехода, а
+  /// минуты после.
+  bool isOpenAt(DateTime moment) {
+    final hours = hoursAt(moment);
     if (hours == null) return status == 'active'; // fallback if no hours data
     if (hours['is_open'] == false) return false;
 
@@ -250,8 +263,7 @@ class Establishment {
     final closeStr = hours['close'] as String?;
     if (openStr == null || closeStr == null) return status == 'active';
 
-    final now = DateTime.now();
-    final currentMinutes = now.hour * 60 + now.minute;
+    final currentMinutes = moment.hour * 60 + moment.minute;
 
     final openParts = openStr.split(':');
     final closeParts = closeStr.split(':');
@@ -265,13 +277,20 @@ class Establishment {
     return currentMinutes >= openMinutes && currentMinutes < closeMinutes;
   }
 
-  /// Get today's closing time string
-  String? get todayClosingTime {
-    final hours = todayHours;
+  /// Check if establishment is currently open based on working hours
+  bool get isCurrentlyOpen => isOpenAt(DateTime.now());
+
+  /// Время закрытия на конкретный момент; `null`, если день выходной или
+  /// часов нет.
+  String? closingTimeAt(DateTime moment) {
+    final hours = hoursAt(moment);
     if (hours == null) return null;
     if (hours['is_open'] == false) return null;
     return hours['close'] as String?;
   }
+
+  /// Get today's closing time string
+  String? get todayClosingTime => closingTimeAt(DateTime.now());
 
   /// Copy with modifications
   Establishment copyWith({
