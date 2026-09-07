@@ -14,8 +14,11 @@
  *   - the migrations are idempotent (re-runnable);
  *   - the seed_import_registry phase/coords CHECKs hold.
  *
- * Skips gracefully if the local Postgres (pg-test) is unreachable, so the unit
- * suite is never blocked by a missing container.
+ * Требует живой Postgres и падает без него честно. Прежняя мягкая ветка
+ * обещала пропуск ради «юнит-сьюта без контейнера», но такого прогона не
+ * существует: все скрипты package.json запускают сьют целиком, а globalSetup
+ * ходит в БД запросом без catch — при недоступном Postgres jest прерывается
+ * раньше загрузки этого файла.
  */
 
 import pg from 'pg';
@@ -47,19 +50,16 @@ const insertEst = (client, { name, slug, categories, cuisines }) =>
     [PARTNER_ID, name, categories, cuisines, slug],
   );
 
-let available = true;
 let scratchPool;
 
 beforeAll(async () => {
   // 1. Create the scratch DB from a maintenance connection.
+  // Подключение обязано удаться: globalSetup (jest.config.js) уже сходил в ту
+  // же БД запросом без catch, и при недоступном Postgres прогон не дошёл бы
+  // до этого файла. Прежняя мягкая ветка гасила все 11 тестов условием,
+  // которое не может выполниться ни в одной среде.
   const admin = new pg.Client({ ...CONN, database: 'postgres' });
-  try {
-    await admin.connect();
-  } catch {
-    available = false;
-    await admin.end().catch(() => {});
-    return;
-  }
+  await admin.connect();
   try {
     // Terminate any lingering backend from a crashed prior run, then recreate.
     await admin.query(
@@ -94,7 +94,6 @@ afterAll(async () => {
   // Best-effort cleanup — a leftover scratch DB is harmless (beforeAll recreates
   // it), so a teardown hiccup must never turn a green run red.
   if (scratchPool) await scratchPool.end().catch(() => {});
-  if (!available) return;
   const admin = new pg.Client({ ...CONN, database: 'postgres' });
   try {
     await admin.connect();
@@ -112,7 +111,6 @@ afterAll(async () => {
 
 describe('canon CHECK — accept / reject', () => {
   test('accepts canonical categories + cuisines', async () => {
-    if (!available) return;
     await expect(
       insertEst(scratchPool, {
         name: 'A1', slug: 'a1',
@@ -122,7 +120,6 @@ describe('canon CHECK — accept / reject', () => {
   });
 
   test('rejects a non-canonical category (English legacy)', async () => {
-    if (!available) return;
     await expect(
       insertEst(scratchPool, {
         name: 'A2', slug: 'a2', categories: ['restaurant'], cuisines: ['Народная'],
@@ -131,7 +128,6 @@ describe('canon CHECK — accept / reject', () => {
   });
 
   test('rejects a non-canonical cuisine', async () => {
-    if (!available) return;
     await expect(
       insertEst(scratchPool, {
         name: 'A3', slug: 'a3', categories: ['Ресторан'], cuisines: ['european'],
@@ -140,7 +136,6 @@ describe('canon CHECK — accept / reject', () => {
   });
 
   test('rejects an empty categories array', async () => {
-    if (!available) return;
     await expect(
       insertEst(scratchPool, {
         name: 'A4', slug: 'a4', categories: [], cuisines: ['Народная'],
@@ -149,7 +144,6 @@ describe('canon CHECK — accept / reject', () => {
   });
 
   test('rejects an empty cuisines array', async () => {
-    if (!available) return;
     await expect(
       insertEst(scratchPool, {
         name: 'A5', slug: 'a5', categories: ['Ресторан'], cuisines: [],
@@ -158,7 +152,6 @@ describe('canon CHECK — accept / reject', () => {
   });
 
   test('accepts NULL categories (nullable column)', async () => {
-    if (!available) return;
     await expect(
       insertEst(scratchPool, {
         name: 'A6', slug: 'a6', categories: null, cuisines: ['Народная'],
@@ -167,7 +160,6 @@ describe('canon CHECK — accept / reject', () => {
   });
 
   test('rejects a NULL element inside categories', async () => {
-    if (!available) return;
     await expect(
       insertEst(scratchPool, {
         name: 'A7', slug: 'a7', categories: ['Ресторан', null], cuisines: ['Народная'],
@@ -178,7 +170,6 @@ describe('canon CHECK — accept / reject', () => {
 
 describe('normalize + dedupe replay (migration 030 re-run)', () => {
   test('repairs legacy English + Кальян stray and collapses the dedupe artifact', async () => {
-    if (!available) return;
     const c = await scratchPool.connect();
     try {
       // Drop the constraints so dirty data can be inserted.
@@ -212,7 +203,6 @@ describe('normalize + dedupe replay (migration 030 re-run)', () => {
   });
 
   test('constraints are back after the re-run (reject still fires)', async () => {
-    if (!available) return;
     await expect(
       insertEst(scratchPool, {
         name: 'D3', slug: 'd3', categories: ['cafe'], cuisines: ['Народная'],
@@ -223,7 +213,6 @@ describe('normalize + dedupe replay (migration 030 re-run)', () => {
 
 describe('seed_import_registry (migration 031)', () => {
   test('accepts a valid phase and rejects an out-of-canon phase', async () => {
-    if (!available) return;
     await expect(
       scratchPool.query(
         `INSERT INTO seed_import_registry (stable_id, batch_id, content_hash, phase)
@@ -240,7 +229,6 @@ describe('seed_import_registry (migration 031)', () => {
   });
 
   test('rejects an out-of-canon coords_source', async () => {
-    if (!available) return;
     await expect(
       scratchPool.query(
         `INSERT INTO seed_import_registry (stable_id, batch_id, content_hash, coords_source)
