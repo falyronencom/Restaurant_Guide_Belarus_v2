@@ -399,6 +399,12 @@ describe('Smart Search - Caching', () => {
     } else {
       redisReady = true;
     }
+
+    // Падать честно, а не зеленеть молча: без Redis в этом блоке проверять
+    // нечего. Та же позиция, что в reviews / promotions / auth-password-reset.
+    if (!redisReady) {
+      throw new Error('Redis connection is required for the intent cache test');
+    }
   });
 
   afterAll(async () => {
@@ -408,11 +414,6 @@ describe('Smart Search - Caching', () => {
   });
 
   test('cacheIntent and getCachedIntent roundtrip', async () => {
-    if (!redisReady) {
-      console.warn('Redis not available, skipping cache roundtrip test');
-      return;
-    }
-
     const intent = {
       cuisine: ['Итальянская'], category: 'Ресторан', meal_type: null,
       price_max: null, location: null, sort: 'rating', tags: [], error: null,

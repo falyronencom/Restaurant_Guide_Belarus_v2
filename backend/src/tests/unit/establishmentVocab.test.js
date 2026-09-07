@@ -144,7 +144,14 @@ describe('establishmentVocab — DB CHECK parity (migration ↔ JS canon)', () =
     const schema = readFileSync(join(MIGRATIONS_DIR, 'production_schema.sql'), 'utf8');
     const cats = extractCanonFromCheck(schema, 'categories');
     const cuis = extractCanonFromCheck(schema, 'cuisines');
-    if (cats !== null) expect([...cats].sort()).toEqual([...VALID_CATEGORIES].sort());
-    if (cuis !== null) expect([...cuis].sort()).toEqual([...VALID_CUISINES].sort());
+    // Оба CHECK сворачиваются вместе или не сворачиваются вовсе: половинчатая
+    // регенерация оставила бы один канон без ограничения. Это утверждение —
+    // единственное, что тест доказывает, пока фрагментов нет; без него обе
+    // ветки ниже ложны, и тест не выполняет НИ ОДНОЙ проверки.
+    expect(cats === null).toBe(cuis === null);
+    if (cats !== null) {
+      expect([...cats].sort()).toEqual([...VALID_CATEGORIES].sort());
+      expect([...cuis].sort()).toEqual([...VALID_CUISINES].sort());
+    }
   });
 });
