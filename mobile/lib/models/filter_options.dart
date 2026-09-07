@@ -207,23 +207,26 @@ class FilterConstants {
         .toList();
   }
 
-  /// Amenities/features (14 items from Figma)
-  /// Key = API code, Value = display label
+  /// Удобства — канон-10 бэкенда (`ATTRIBUTE_CANON`, SDL CAT-C-3.15) за
+  /// вычетом `accessible_environment`: на него нет ни иконки в
+  /// `assets/icons/`, ни подписи в web. Прежний набор из 14 ключей был взят
+  /// из макета и с каноном не сверялся: девять его ключей не мог нести ни один
+  /// объект, а `searchService` соединяет условия через AND без белого списка,
+  /// поэтому один такой ключ обнулял выдачу вместе с остальными фильтрами.
+  /// Ключ = код API, значение = подпись. Подписи совпадают с карточкой
+  /// заведения и с web `ATTRIBUTE_LABELS` — гость видит одно слово в обоих
+  /// местах. Порядок — `ATTRIBUTE_ORDER` из web.
+  /// Сторож: `test/config/vocabulary_canon_guard_test.dart`.
   static const Map<String, String> amenities = {
-    'delivery': 'Доставка',
-    'live_music': 'Живая музыка',
-    'alcohol': 'Алкоголь',
-    'terrace': 'Летняя терраса',
-    'non_smoking': 'Для некурящих',
+    'delivery': 'Доставка еды',
     'wifi': 'Wi-Fi',
-    'vegetarian': 'Вегетарианские опции',
+    'terrace': 'Терасса',
     'parking': 'Парковка',
-    'events': 'Места для мероприятий',
-    'sports_tv': 'Спорт-трансляции',
-    'dance_floor': 'Танцпол',
-    'kids_room': 'Детская комната',
-    'karaoke': 'Караоке',
-    'hookah': 'Кальян',
+    'live_music': 'Живая музыка',
+    'kids_zone': 'Детская зона',
+    'banquet': 'Банкет',
+    'pets_allowed': 'Животные',
+    'smoking': 'Курение',
   };
 
   /// Get amenity display label by code
