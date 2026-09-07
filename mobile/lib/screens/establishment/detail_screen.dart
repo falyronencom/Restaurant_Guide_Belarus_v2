@@ -17,6 +17,7 @@ import 'package:restaurant_guide_mobile/services/partner_service.dart';
 import 'package:restaurant_guide_mobile/services/api_client.dart';
 import 'package:restaurant_guide_mobile/models/promotion.dart';
 import 'package:restaurant_guide_mobile/config/dimensions.dart';
+import 'package:restaurant_guide_mobile/config/establishment_attributes.dart';
 import 'package:restaurant_guide_mobile/screens/reviews/write_review_screen.dart';
 import 'package:restaurant_guide_mobile/screens/reviews/reviews_list_screen.dart';
 import 'package:restaurant_guide_mobile/screens/map/map_screen.dart';
@@ -1367,49 +1368,14 @@ class _EstablishmentDetailScreenState extends State<EstablishmentDetailScreen> {
 
   /// Build attributes section
   Widget _buildAttributesSection() {
-    final attributes = _establishment!.attributes;
+    final amenities =
+        EstablishmentAttributes.active(_establishment!.attributes);
 
-    // Extract available amenities
-    final amenities = <Map<String, dynamic>>[];
-
-    if (attributes != null) {
-      if (attributes['delivery'] == true) {
-        amenities.add({'name': 'Доставка еды', 'svg': 'Доставка еды'});
-      }
-      if (attributes['wifi'] == true) {
-        amenities.add({'name': 'Wi-Fi', 'svg': 'Wifi'});
-      }
-      if (attributes['terrace'] == true) {
-        amenities.add({'name': 'Терасса', 'svg': 'Терасса'});
-      }
-      if (attributes['parking'] == true) {
-        amenities.add({'name': 'Парковка', 'svg': 'Парковка'});
-      }
-      if (attributes['live_music'] == true) {
-        amenities.add({'name': 'Живая музыка', 'svg': 'Живая музыка'});
-      }
-      if (attributes['kids_zone'] == true) {
-        amenities.add({'name': 'Детская зона', 'svg': 'Детская зона'});
-      }
-      if (attributes['banquet'] == true) {
-        amenities.add({'name': 'Банкет', 'svg': 'Банкет'});
-      }
-      if (attributes['pets_allowed'] == true) {
-        amenities.add({'name': 'Животные', 'svg': 'Животные'});
-      }
-      if (attributes['smoking'] == true) {
-        amenities.add({'name': 'Курение', 'svg': 'Курение'});
-      }
-    }
-
-    // If no amenities, show default set
-    if (amenities.isEmpty) {
-      amenities.addAll([
-        {'name': 'Доставка еды', 'svg': 'Доставка еды'},
-        {'name': 'Wi-Fi', 'svg': 'Wifi'},
-        {'name': 'Терасса', 'svg': 'Терасса'},
-      ]);
-    }
+    // Пустые атрибуты — это «данных нет», а не повод их придумать. Прежний код
+    // при пустом наборе подставлял «Доставка еды · Wi-Fi · Терасса», и гость не
+    // мог отличить подстановку от факта; карточки на старте заполняются вручную,
+    // так что пустые attributes — обычное дело. Раздел просто не показывается.
+    if (amenities.isEmpty) return const SizedBox.shrink();
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
