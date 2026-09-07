@@ -142,32 +142,6 @@ class FilterConstants {
     'Клуб',
   ];
 
-  /// Map Russian category names to English API values
-  static const Map<String, String> categoryMapping = {
-    'Ресторан': 'restaurant',
-    'Кофейня': 'cafe',
-    'Кафе': 'cafe_dining',
-    'Фаст-фуд': 'fast_food',
-    'Пиццерия': 'pizzeria',
-    'Бар': 'bar',
-    'Паб': 'pub',
-    'Кондитерская': 'bakery',
-    'Пекарня': 'bakery',
-    'Караоке': 'karaoke',
-    'Столовая': 'canteen',
-    'Кальянная': 'hookah_bar',
-    'Боулинг': 'bowling',
-    'Бильярд': 'billiards',
-    'Клуб': 'nightclub',
-  };
-
-  /// Convert Russian category names to English API values
-  static List<String> categoriesToApi(List<String> russianCategories) {
-    return russianCategories
-        .map((russian) => categoryMapping[russian] ?? russian.toLowerCase())
-        .toList();
-  }
-
   /// Cuisine types (12 items)
   static const List<String> cuisines = [
     'Народная',
@@ -183,29 +157,6 @@ class FilterConstants {
     'Китайская',
     'Восточная',
   ];
-
-  /// Map Russian cuisine names to English API values
-  static const Map<String, String> cuisineMapping = {
-    'Народная': 'belarusian',
-    'Американская': 'american',
-    'Азиатская': 'asian',
-    'Вегетарианская': 'vegetarian',
-    'Итальянская': 'italian',
-    'Смешанная': 'mixed',
-    'Грузинская': 'georgian',
-    'Европейская': 'european',
-    'Японская': 'japanese',
-    'Авторская': 'fusion',
-    'Китайская': 'chinese',
-    'Восточная': 'eastern',
-  };
-
-  /// Convert Russian cuisine names to English API values
-  static List<String> cuisinesToApi(List<String> russianCuisines) {
-    return russianCuisines
-        .map((russian) => cuisineMapping[russian] ?? russian.toLowerCase())
-        .toList();
-  }
 
   /// Удобства — канон-10 бэкенда (`ATTRIBUTE_CANON`, SDL CAT-C-3.15) за
   /// вычетом `accessible_environment`: на него нет ни иконки в
