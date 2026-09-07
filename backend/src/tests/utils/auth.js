@@ -13,6 +13,34 @@ import argon2 from 'argon2';
 import { randomUUID } from 'crypto';
 
 /**
+ * UTC wall clock for a `timestamp without time zone` column.
+ * UTC-стенка для колонки `timestamp without time zone`.
+ *
+ * Every time column in the schema is naive and holds UTC: production writes
+ * `NOW()` on a UTC database, and `analyticsService.startOfUtcDay` builds every
+ * window and bucket on that contract. A JS `Date` bound directly breaks it:
+ * node-pg serialises a Date as LOCAL time with an offset
+ * (`2026-09-07T00:57:00.000+03:00`), Postgres drops the offset when casting to
+ * a naive timestamp, and the row keeps the process wall clock — Minsk time on
+ * the gate (`TZ=Europe/Minsk`). Between 00:00 and 03:00 Minsk such a row
+ * carries tomorrow's UTC date and falls off the timeline axis: admin-analytics
+ * «timeline carries the users it counted», gate run 34062250741.
+ *
+ * `toISOString()` renders the UTC fields; the trailing `Z` is ignored by the
+ * same naive cast, leaving exactly UTC. This is a full instant, so
+ * `toISOString()` is right here — the ban on it concerns date-only strings
+ * built from local calendar components (bookingService tests).
+ *
+ * Guarded by tests/integration/fixtures-naive-utc.test.js.
+ *
+ * @param {Date} [date=new Date()] - Instant to store
+ * @returns {string} ISO-8601 UTC string for a naive timestamp parameter
+ */
+export function utcTimestamp(date = new Date()) {
+  return date.toISOString();
+}
+
+/**
  * Argon2 options (matching production settings)
  */
 const ARGON2_OPTIONS = {
@@ -54,6 +82,8 @@ export async function createTestUser(userData) {
     RETURNING id, email, phone, name, role, auth_method, created_at
   `;
 
+  // `created_at` comes back through node-pg's local parse of a naive value, as
+  // every read does; compare it in SQL, never against `Date.now()`.
   const values = [
     userId,
     email ? email.toLowerCase().trim() : null,
@@ -65,8 +95,8 @@ export async function createTestUser(userData) {
     false,
     false,
     true,
-    new Date(),
-    new Date()
+    utcTimestamp(),
+    utcTimestamp()
   ];
 
   const result = await pool.query(query, values);
@@ -141,7 +171,9 @@ export async function storeRefreshToken(userId, refreshToken) {
     VALUES ($1, $2, $3, $4, $5)
   `;
 
-  await pool.query(query, [userId, refreshToken, expiresAt, new Date(), null]);
+  await pool.query(query, [
+    userId, refreshToken, utcTimestamp(expiresAt), utcTimestamp(), null
+  ]);
 }
 
 /**
@@ -336,8 +368,8 @@ export async function createTestEstablishment(partnerId) {
     '$$',
     workingHours,
     'active',
-    new Date(),
-    new Date()
+    utcTimestamp(),
+    utcTimestamp()
   ];
 
   const result = await pool.query(query, values);
@@ -345,6 +377,7 @@ export async function createTestEstablishment(partnerId) {
 }
 
 export default {
+  utcTimestamp,
   createTestUser,
   createUserAndGetTokens,
   generateTestAccessToken,

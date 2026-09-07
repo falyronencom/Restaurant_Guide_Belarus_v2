@@ -730,13 +730,22 @@ describe('Period window is reported back', () => {
     }
   });
 
-  test('90d timeline carries the users it counted', async () => {
+  // Daily buckets (7d, 30d) and weekly ones (90d) alike. The fixture creates
+  // its users now, so every window must contain them, and the bucket sum must
+  // equal the card's count: a zero total means the buckets and the rows
+  // disagree. Gate run 34062250741 saw exactly that for 90d (`Expected: 13,
+  // Received: 0`) between 00:00 and 03:00 Minsk on a Monday: the fixture wrote
+  // `created_at` as the Minsk wall clock, so the row carried tomorrow's UTC
+  // date — a new ISO week, beyond the axis. Daily buckets hit the same wall
+  // every night; weekly ones only when the local date crosses into a new
+  // week. Fixtures now write UTC (`tests/utils/auth.js` `utcTimestamp`), and
+  // this holds under any process timezone. Proven red on the old helper under
+  // TZ=GMT+15:59 (local date ahead of UTC): 7d and 30d dropped every row.
+  test.each(['7d', '30d', '90d'])('%s timeline carries the users it counted', async (period) => {
     const { body } = await request(app)
-      .get(`${BASE_URL}/users?period=90d`)
+      .get(`${BASE_URL}/users?period=${period}`)
       .set('Authorization', `Bearer ${adminToken}`);
 
-    // The fixture creates its users now, so a 90-day window must contain them.
-    // A zero total here means the buckets and the rows disagree.
     const inTimeline = body.data.registration_timeline
       .reduce((sum, p) => sum + p.count, 0);
     expect(inTimeline).toBe(body.data.new_in_period);
