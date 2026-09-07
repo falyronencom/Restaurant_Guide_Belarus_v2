@@ -191,9 +191,13 @@ export async function parseIntent(query) {
     logger.debug('AI raw parsed response', { query, parsed });
     const validated = intentSchema.parse(parsed);
 
+    // Фраза и разбор отсюда убраны: их несла аналитическая строка
+    // (`smart_search_query`), и на успешном пути это был второй экземпляр тех
+    // же слов. Строчкой выше при `debug` уже пишется сырой разбор — для
+    // локальной отладки этого достаточно. Модель оставляем: она меняется
+    // независимо от запроса (маршрутизация OpenRouter). / The phrase and the
+    // parsed intent are gone from here — they duplicated the analytics line.
     logger.info('AI intent parsed successfully', {
-      query,
-      intent: validated,
       model: data.model || config.model,
     });
 
@@ -433,14 +437,15 @@ export async function executeSmartSearch(query, context = {}, pagination = {}, e
   }
 
   // Log for analytics
-  logSearchQuery(
-    query,
+  logSearchQuery({
+    rawQuery: query,
+    queryHash,
     intent,
-    searchResult.pagination?.total || 0,
+    resultCount: searchResult.pagination?.total || 0,
     isFallback,
     fromCache,
-    Object.keys(explicitFilters).length > 0,
-  );
+    hasExplicitFilters: Object.keys(explicitFilters).length > 0,
+  });
 
   return {
     intent: intent || null,
@@ -451,21 +456,62 @@ export async function executeSmartSearch(query, context = {}, pagination = {}, e
 }
 
 /**
- * Log search query for analytics (structured logger, no migration needed).
+ * Собрать строку аналитики поиска — ЧИСТАЯ функция, отсюда и проверяемость:
+ * решение «какие поля попадают в лог» проверяется напрямую, без подмены логгера.
  *
- * `explicitFilters` — только ФАКТ наличия фильтров экрана, без значений:
- * значения ничего не добавляют к разбору стоимости запроса, а строка лога и
- * так несёт свободный текст пользователя. / Only whether screen filters were
- * present, never which ones.
+ * **Слова пользователя пишутся только там, где по ним действуют** — когда
+ * выдача пуста. Ноль результатов означает дыру: нет синонима, нет данных, или
+ * разбор промахнулся; чтобы это чинить, нужна сама фраза. Удачный запрос не
+ * учит почти ничему — по нему хватает формы разбора и счётчиков.
+ *
+ * Почему не «оставить как было и решить при запуске»: сегодня в логе лежат
+ * тестовые запросы своей же команды — продуктового сигнала ноль. Сигнал
+ * появляется вместе с живыми людьми, то есть одновременно с экспозицией.
+ * Отсрочка не покупает ничего, поэтому состояние выбрано устойчивое, без
+ * необходимости к нему возвращаться. / The user's words are logged only where
+ * they are actionable — on an empty result set. A successful query teaches
+ * almost nothing beyond its shape.
+ *
+ * `intentShape` не содержит свободного текста: категория и кухня из закрытых
+ * словарей, сортировка из трёх значений, блюдо и теги сведены к признаку и
+ * счётчику. Полный разбор повторяет фразу дословно (`tags: ["пицца за 20
+ * рублей"]`, прод 07.09) — поэтому целиком он идёт только рядом с самой фразой.
  */
-function logSearchQuery(rawQuery, parsedIntent, resultCount, isFallback, fromCache, hasExplicitFilters = false) {
-  logger.info('smart_search_query', {
-    query: rawQuery,
-    intent: parsedIntent,
+export function buildSearchQueryLog({
+  rawQuery,
+  queryHash,
+  intent,
+  resultCount,
+  isFallback,
+  fromCache,
+  hasExplicitFilters = false,
+}) {
+  const foundNothing = resultCount === 0;
+
+  return {
+    queryHash,
     resultCount,
     fallback: isFallback,
     fromCache,
     explicitFilters: hasExplicitFilters,
+    intentShape: intent
+      ? {
+        hasDish: intent.dish != null,
+        category: intent.category,
+        cuisine: intent.cuisine,
+        priceMax: intent.price_max,
+        sort: intent.sort,
+        tagCount: intent.tags?.length ?? 0,
+      }
+      : null,
+    // Слова — только на пустой выдаче, вместе с полным разбором: чинить дыру
+    // без них нельзя.
+    ...(foundNothing ? { query: rawQuery, intent } : {}),
     timestamp: new Date().toISOString(),
-  });
+  };
+}
+
+/** Пишет то, что решил [buildSearchQueryLog]. */
+function logSearchQuery(params) {
+  logger.info('smart_search_query', buildSearchQueryLog(params));
 }
