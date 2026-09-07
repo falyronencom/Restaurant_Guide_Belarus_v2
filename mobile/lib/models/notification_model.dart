@@ -17,7 +17,8 @@ enum NotificationType {
   bookingExpired,
   bookingCancelled,
   promotionNew,
-  menuParsed;
+  menuParsed,
+  menuItemHiddenByAdmin;
 
   static NotificationType fromString(String value) {
     switch (value) {
@@ -53,6 +54,8 @@ enum NotificationType {
         return NotificationType.promotionNew;
       case 'menu_parsed':
         return NotificationType.menuParsed;
+      case 'menu_item_hidden_by_admin':
+        return NotificationType.menuItemHiddenByAdmin;
       default:
         return NotificationType.newReview;
     }
@@ -111,6 +114,7 @@ class NotificationModel {
         return NotificationCategory.establishments;
       case NotificationType.promotionNew:
       case NotificationType.menuParsed:
+      case NotificationType.menuItemHiddenByAdmin:
         return NotificationCategory.establishments;
     }
   }
@@ -150,6 +154,8 @@ class NotificationModel {
         return Icons.local_offer;
       case NotificationType.menuParsed:
         return Icons.menu_book;
+      case NotificationType.menuItemHiddenByAdmin:
+        return Icons.visibility_off;
     }
   }
 
@@ -185,6 +191,8 @@ class NotificationModel {
         return const Color(0xFFFF9800);
       case NotificationType.menuParsed:
         return const Color(0xFF2196F3);
+      case NotificationType.menuItemHiddenByAdmin:
+        return const Color(0xFF9E9E9E);
     }
   }
 

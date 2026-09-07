@@ -390,7 +390,10 @@ class _NotificationListScreenState extends State<NotificationListScreen> {
           );
         }
       case NotificationType.menuParsed:
+      case NotificationType.menuItemHiddenByAdmin:
         // Component 8, Segment C: open partner menu section.
+        // Скрытие позиции модератором ведёт туда же: партнёр видит
+        // свой раздел меню, где позиции больше нет.
         if (notification.establishmentId != null) {
           Navigator.of(context, rootNavigator: true).push(
             MaterialPageRoute(
