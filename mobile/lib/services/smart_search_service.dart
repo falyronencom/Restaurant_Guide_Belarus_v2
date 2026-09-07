@@ -34,6 +34,11 @@ class SmartSearchResult {
 class SmartSearchIntent {
   final String? category;
   final List<String>? cuisine;
+
+  /// Блюдо из запроса («пицца») — главный смысл запроса по меню, поэтому
+  /// идёт первым в заголовке превью / dish named in the query — the primary
+  /// intent of a menu-driven query, so it leads the preview header
+  final String? dish;
   final String? mealType;
   final double? priceMax;
   final String? location;
@@ -43,6 +48,7 @@ class SmartSearchIntent {
   SmartSearchIntent({
     this.category,
     this.cuisine,
+    this.dish,
     this.mealType,
     this.priceMax,
     this.location,
@@ -54,6 +60,7 @@ class SmartSearchIntent {
     return SmartSearchIntent(
       category: json['category'] as String?,
       cuisine: (json['cuisine'] as List?)?.map((e) => e.toString()).toList(),
+      dish: json['dish'] as String?,
       mealType: json['meal_type'] as String?,
       priceMax: json['price_max'] != null
           ? (json['price_max'] as num).toDouble()
@@ -64,17 +71,26 @@ class SmartSearchIntent {
     );
   }
 
-  /// Build human-readable description of the parsed intent
+  /// Build human-readable description of the parsed intent.
+  /// Блюдо первым: «пицца · до 20 BYN» / the dish leads: «пицца · до 20 BYN»
   String toDisplayString() {
     final parts = <String>[];
+    if (dish != null && dish!.isNotEmpty) parts.add(dish!);
     if (category != null) parts.add(category!);
     if (cuisine != null && cuisine!.isNotEmpty) parts.add(cuisine!.join(', '));
-    if (priceMax != null) parts.add('до $priceMax BYN');
+    if (priceMax != null) parts.add('до ${_formatPrice(priceMax!)} BYN');
     if (location != null) parts.add(location!);
     if (sort == 'distance') parts.add('рядом с вами');
     if (sort == 'rating') parts.add('лучшие');
     if (sort == 'price_asc') parts.add('недорого');
     return parts.join(' \u00b7 ');
+  }
+
+  /// Целая цена без хвоста «.0» («20», не «20.0»), дробная — как есть («19.5»)
+  /// / a whole price drops the ".0" tail, a fractional one prints as-is
+  static String _formatPrice(double price) {
+    if (price == price.roundToDouble()) return price.round().toString();
+    return price.toString();
   }
 }
 
