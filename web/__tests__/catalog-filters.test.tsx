@@ -11,6 +11,12 @@
  *      pagination stays indexable.
  *   3. FilterShelf island — user toggle → URL round-trip (OR-within-group
  *      comma-join, select-all short-circuit, page reset, single-select hours).
+ *
+ * Honesty-audit boundary (2026-09-07): `features` is absent from all three
+ * concerns. The page can stop forwarding it to getCatalog (mutation M19) and the
+ * shelf can collapse it when all are selected — treating an AND facet as OR
+ * (M29) — with all 19 tests green. `expect.objectContaining` cannot see a
+ * missing key, so concern 1 pins only the keys it names.
  */
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

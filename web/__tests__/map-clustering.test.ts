@@ -151,9 +151,12 @@ describe('boundsOfFeatures', () => {
     const latSpan = north - south;
     expect(lngSpan).toBeGreaterThan(0);
     expect(latSpan).toBeGreaterThan(0);
-    // Roughly a city block, not a continent and not a point.
-    expect(lngSpan).toBeLessThan(0.01);
-    expect(latSpan).toBeLessThan(0.01);
+    // Honesty audit 2026-09-07: a band («small, not a continent») does not pin
+    // a default — CLUSTER_MIN_SPAN could drift 0.0015 → 0.008 with this file
+    // green (mutation M61). The shipped value is pinned exactly, as the title
+    // claims; the band above stays as the sanity floor.
+    expect(lngSpan).toBeCloseTo(0.0015, 10);
+    expect(latSpan).toBeCloseTo(0.0015, 10);
     expect((west + east) / 2).toBeCloseTo(27.5615, 10);
   });
 

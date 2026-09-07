@@ -12,6 +12,11 @@
  *   2. 'needs_caution'  → "уточнить" indicator shown; EXCLUDED from JSON-LD.
  *   3. Empty items + PDF (file_type='pdf', type='menu') → PDF fallback link.
  *   4. Empty items + no PDF → graceful empty-state «Меню пока не загружено.»
+ *
+ * Honesty-audit boundary (2026-09-07): the PRICE is asserted nowhere — neither
+ * the rendered «12,50 BYN» row nor the JSON-LD offer. Rendering every fractional
+ * price as «—» (mutation M52) and swapping priceCurrency BYN→USD (M53) both keep
+ * all 481 tests green.
  */
 import { render, screen } from '@testing-library/react';
 

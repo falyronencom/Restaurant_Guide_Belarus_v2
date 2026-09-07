@@ -67,6 +67,15 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 
 beforeEach(() => jest.clearAllMocks());
 
+/*
+ * Honesty-audit boundary (2026-09-07): the cases below cover the guard on
+ * list / update / delete / media-temp / media-attach. `create`, `submit`,
+ * `load` and `retry-ocr` have NO cross-origin case — removing assertSameOrigin
+ * from create or submit keeps this whole file green (mutations M37/M38), while
+ * the same removal on delete goes red (M39). Read the describe below as "five
+ * of the nine handlers", not as the guard's coverage.
+ */
+
 describe('same-origin guard on the partner handlers', () => {
   it('blocks a cross-origin list POST with 403 before the operation runs', async () => {
     const res = await listPost(makeRequest(CROSS));

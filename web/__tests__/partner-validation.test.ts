@@ -23,6 +23,16 @@ function withMondayOpen(f: WizardFormState): WizardFormState {
 }
 
 describe('meetsValidatorMinimum', () => {
+  /*
+   * Honesty-audit boundary (2026-09-07): only ONE conjunct is ever falsified on
+   * its own here — observed hours. `hasCuisine` (mutation M59), `hasCategory`,
+   * `hasName`, `hasCity` and the `street || building` address rule (M34) are
+   * never the sole reason a fixture is false, so each can be dropped from
+   * validation.ts with this file green. Same shape in evaluateE1 below: only
+   * `photos` and `menu` are individually falsified — `hours` and
+   * `classification` are not (M62) — and the photo threshold is probed with 2
+   * against 5, so 4 would pass as well (M60).
+   */
   it('is false for an empty form', () => {
     expect(meetsValidatorMinimum(emptyForm())).toBe(false);
   });
@@ -133,5 +143,12 @@ describe('clientCompleteness mirrors the base_score weights', () => {
   it('sums only the present fields (description + phone = 40)', () => {
     const f = { ...emptyForm(), description: 'x', phone: '+375291112233' };
     expect(clientCompleteness(f)).toBe(40);
+    // Honesty audit 2026-09-07: the total alone cannot see a permutation of the
+    // weights — swapping priceRange (25) with attributes (20) left every test
+    // green. Each weight this file claims to mirror is now pinned on its own.
+    expect(clientCompleteness({ ...emptyForm(), priceRange: '$$' })).toBe(25);
+    expect(clientCompleteness({ ...emptyForm(), attributes: ['wifi'] })).toBe(20);
+    expect(clientCompleteness({ ...emptyForm(), email: 'info@example.by' })).toBe(10);
+    expect(clientCompleteness({ ...emptyForm(), website: 'example.by' })).toBe(5);
   });
 });

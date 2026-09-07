@@ -5,7 +5,11 @@
  * workaround needed). render() flushes the mount useEffect via act(), so the
  * badge's post-mount state is asserted synchronously.
  *
- * computeOpenStatus is a pure helper (separately unit-testable). We mock it so
+ * computeOpenStatus is a pure helper. Honesty audit 2026-09-07: it is NOT
+ * separately unit-tested — nothing in web/__tests__ asserts its output, and its
+ * overnight-rollover branch is executed by no test at all (breaking it leaves
+ * all 481 tests green, mutation M45). Do not read the mock below as "covered
+ * elsewhere": it narrows THIS file to the island. We mock it so
  * the badge's render branches are deterministic and independent of wall-clock
  * time — the island's own job (map computed status → DOM) is what's under test.
  */

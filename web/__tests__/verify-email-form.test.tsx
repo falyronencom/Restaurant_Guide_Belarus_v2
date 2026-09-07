@@ -4,6 +4,12 @@
  * terminal states: verify success and the graceful EMAIL_ALREADY_VERIFIED
  * (from EITHER action). useAuth and the Server Actions are mocked (the actions'
  * own contract lives in auth-verify-email-action.test.ts).
+ *
+ * Honesty-audit boundary (2026-09-07): the two files do NOT meet. This one types
+ * into the field by label and mocks the action; the action test builds its own
+ * FormData carrying `code`. The `name` attribute that joins them is asserted by
+ * nothing — renaming it (mutation M47; M48/M49 for LoginForm) keeps all 481 tests
+ * green while the form stops submitting anything the action reads.
  */
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

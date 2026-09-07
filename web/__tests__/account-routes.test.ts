@@ -84,8 +84,12 @@ describe('favorites list — page parsing', () => {
   it('falls back to page 1 on a non-integer or sub-1 page', async () => {
     (loadFavorites as jest.Mock).mockResolvedValue({ ok: true, favorites: [] });
     await favoritesListPost(makeRequest(SAME, { page: 0 }));
+    // Honesty audit 2026-09-07: a non-integer NUMBER is what exercises
+    // Number.isInteger — 0 is caught by the range check and 'x' by the type
+    // check, so without this line the integer guard was guarded by nothing.
+    await favoritesListPost(makeRequest(SAME, { page: 2.5 }));
     await favoritesListPost(makeRequest(SAME, { page: 'x' }));
-    expect((loadFavorites as jest.Mock).mock.calls).toEqual([[1], [1]]);
+    expect((loadFavorites as jest.Mock).mock.calls).toEqual([[1], [1], [1]]);
   });
 
   it('returns the operation envelope verbatim', async () => {

@@ -38,6 +38,11 @@ describe('assertSameOrigin', () => {
   });
 
   it('rejects a cross-origin POST with 403 {ok:false,code:CSRF}', async () => {
+    // Honesty-audit boundary (2026-09-07): 'evil.example' shares no suffix with
+    // 'nirivio.by', so this fixture cannot tell `===` from `.endsWith()` —
+    // replacing the equality with a suffix match keeps all 481 tests green
+    // (mutation M57), and 'https://evilnirivio.by' would then pass as
+    // same-origin. The missing fixture is a suffix-shaped attacker origin.
     const res = assertSameOrigin(
       reqWith({ origin: 'https://evil.example', host: 'nirivio.by' }),
     );

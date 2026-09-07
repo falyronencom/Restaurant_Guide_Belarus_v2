@@ -70,6 +70,10 @@ describe('hasAnyFilter — SEO noindex predicate (CAT-C-2.3)', () => {
   });
   it('true for each real facet/sort/search param', () => {
     expect(hasAnyFilter({ cuisine: 'italian' })).toBe(true);
+    // Honesty audit 2026-09-07: the enumeration must stay complete — `features`
+    // was missing, and deleting its clause from hasAnyFilter kept all 13 tests
+    // green while filtered URLs went back into the index.
+    expect(hasAnyFilter({ features: 'wifi' })).toBe(true);
     expect(hasAnyFilter({ priceRange: '$' })).toBe(true);
     expect(hasAnyFilter({ hours: 'until_22' })).toBe(true);
     expect(hasAnyFilter({ minRating: '4' })).toBe(true);

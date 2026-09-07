@@ -33,6 +33,9 @@ describe('yandexStaticMapUrl', () => {
   });
 
   it('keeps size and zoom within the API limits (≤650×450, z≤17)', () => {
+    // Honesty-audit note (2026-09-07): this is a BOUND, not a pin — z=1 passes
+    // it too (mutation M50). If the preview FRAME is the real subject, the bound
+    // has to become two-sided. Owner's call, left as is.
     const url = yandexStaticMapUrl(LAT, LON, 'KEY') as string;
     const size = /[?&]size=(\d+),(\d+)/.exec(url);
     const zoom = /[?&]z=(\d+)/.exec(url);
