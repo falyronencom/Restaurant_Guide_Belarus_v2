@@ -374,18 +374,11 @@ class _SearchHomeScreenState extends State<SearchHomeScreen> {
 
   /// "Show all" from preview → navigate to results with current query
   void _onShowAll() {
-    final provider = context.read<EstablishmentsProvider>();
-    final smartProvider = context.read<SmartSearchProvider>();
-    final intent = smartProvider.parsedIntent;
-
-    // Transfer parsed intent filters to EstablishmentsProvider
-    if (intent != null && !smartProvider.isFallback) {
-      if (intent.category != null) {
-        provider.setSearchQuery(null);
-      }
-    }
-    provider.setSearchQuery(_searchController.text);
-    provider.searchEstablishments();
+    // Только переносим фразу и переходим. Запрос делает сам экран результатов
+    // в initState — иначе на один переход уходили ДВА запроса подряд, и первый
+    // из них шёл со старой фразой. / Carry the phrase and navigate; the results
+    // screen issues the request itself, so one tap means one request.
+    context.read<EstablishmentsProvider>().setSearchQuery(_searchController.text);
     Navigator.of(context, rootNavigator: true).pushNamed('/search/results');
   }
 

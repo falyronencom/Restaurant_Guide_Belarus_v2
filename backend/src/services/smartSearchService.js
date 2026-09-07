@@ -219,20 +219,37 @@ export async function parseIntent(query) {
 /**
  * Convert parsed AI intent into parameters for existing search functions.
  *
+ * Политика слияния — «явное сильнее выведенного, по размерностям».
+ * Явные фильтры пришли из видимых пользователю контролов экрана; догадки
+ * разбора — из его же фразы. В одной размерности спор решает контрол: снятый
+ * чип «$$» не должен переживать в выдаче потому, что фраза «недорого»
+ * подставила ярус цены. Разные размерности складываются: бюджет блюда
+ * («пицца за 20 рублей» → priceMaxByn, цена позиции меню) и ярус цены
+ * заведения — разные величины, обе остаются в силе. /
+ * Explicit filters come from visible controls, inferred ones from the phrase;
+ * within one dimension the control wins, across dimensions both apply.
+ *
  * @param {object} intent - Validated intent from parseIntent()
  * @param {{ latitude?: number, longitude?: number, city?: string }} context - User context
+ * @param {object} explicitFilters - Фильтры экрана из тела запроса (уже разобраны
+ *   utils/searchFilterParams.js; ключи с null отброшены). / Screen filters,
+ *   already parsed, absent keys dropped.
  * @returns {object} Parameters compatible with searchByRadius/searchWithoutLocation
  */
-export function buildSmartSearchFilters(intent, context = {}) {
+export function buildSmartSearchFilters(intent, context = {}, explicitFilters = {}) {
   const filters = {};
 
-  // Category
-  if (intent.category) {
+  // Category — явные категории экрана заменяют выведенную из фразы
+  if (explicitFilters.categories) {
+    filters.categories = explicitFilters.categories;
+  } else if (intent.category) {
     filters.categories = [intent.category];
   }
 
-  // Cuisines
-  if (intent.cuisine && intent.cuisine.length > 0) {
+  // Cuisines — та же размерность, то же правило
+  if (explicitFilters.cuisines) {
+    filters.cuisines = explicitFilters.cuisines;
+  } else if (intent.cuisine && intent.cuisine.length > 0) {
     filters.cuisines = intent.cuisine;
   }
 
@@ -257,20 +274,32 @@ export function buildSmartSearchFilters(intent, context = {}) {
   //    (routed through searchService as `priceMaxByn`). price_range is NOT applied,
   //    because the user stated an actual money budget for a specific dish.
   //  - If no dish, fall back to the legacy subjective tier mapping to price_range.
+  //  - Явный ярус с экрана заменяет ярусную подстановку, но НЕ отменяет
+  //    priceMaxByn: «пицца за 20 рублей» с включённой карточкой «$$» — это
+  //    позиция дешевле 20 BYN в заведении класса «$$». / An explicit tier
+  //    replaces the inferred tier but coexists with a dish budget.
   if (intent.price_max != null) {
     if (intent.dish) {
       filters.priceMaxByn = intent.price_max;
-    } else if (intent.price_max <= 15) {
-      filters.priceRange = ['$'];
-    } else if (intent.price_max <= 30) {
-      filters.priceRange = ['$', '$$'];
-    } else {
-      filters.priceRange = ['$', '$$', '$$$'];
+    } else if (!explicitFilters.priceRange) {
+      if (intent.price_max <= 15) {
+        filters.priceRange = ['$'];
+      } else if (intent.price_max <= 30) {
+        filters.priceRange = ['$', '$$'];
+      } else {
+        filters.priceRange = ['$', '$$', '$$$'];
+      }
     }
   }
 
-  // Sort — if null, determined by presence of coordinates
-  if (intent.sort) {
+  if (explicitFilters.priceRange) {
+    filters.priceRange = explicitFilters.priceRange;
+  }
+
+  // Sort — выбранная пользователем сортировка сильнее и догадки, и умолчания
+  if (explicitFilters.sortBy) {
+    filters.sortBy = explicitFilters.sortBy;
+  } else if (intent.sort) {
     filters.sortBy = intent.sort;
   } else {
     filters.sortBy = (context.latitude && context.longitude) ? 'distance' : 'rating';
@@ -302,6 +331,16 @@ export function buildSmartSearchFilters(intent, context = {}) {
     });
   }
 
+  // Размерности, которых разбор фразы не касается вовсе, — прямой проброс.
+  // Спорить не с чем: у intent нет ни часов работы, ни удобств, ни рейтинга,
+  // ни расстояния. / Dimensions the intent parser never produces: passed
+  // straight through, nothing to arbitrate.
+  for (const key of ['hoursFilter', 'features', 'minRating', 'maxDistance', 'radius']) {
+    if (explicitFilters[key] != null) {
+      filters[key] = explicitFilters[key];
+    }
+  }
+
   // Coordinates passthrough
   if (context.latitude && context.longitude) {
     filters.latitude = context.latitude;
@@ -317,9 +356,14 @@ export function buildSmartSearchFilters(intent, context = {}) {
  * @param {string} query - Natural language query
  * @param {{ latitude?: number, longitude?: number, city?: string }} context
  * @param {{ limit?: number, page?: number }} pagination
- * @returns {Promise<{ intent: object|null, results: object[], total: number, fallback: boolean }>}
+ * @param {object} explicitFilters - Фильтры экрана (см. buildSmartSearchFilters).
+ *   Применяются и на ветке fallback: при отказе AI экран результатов обязан
+ *   получить свою классическую выдачу С фильтрами, иначе отключение AI молча
+ *   расширяет выдачу вместо того, чтобы её сузить. / Applied on the fallback
+ *   branch too — otherwise an AI outage silently drops the screen's filters.
+ * @returns {Promise<{ intent: object|null, results: object[], pagination: object, fallback: boolean }>}
  */
-export async function executeSmartSearch(query, context = {}, pagination = {}) {
+export async function executeSmartSearch(query, context = {}, pagination = {}, explicitFilters = {}) {
   const { limit = 20, page = 1 } = pagination;
   const offset = (page - 1) * limit;
 
@@ -350,7 +394,7 @@ export async function executeSmartSearch(query, context = {}, pagination = {}) {
 
   if (intent) {
     // AI-parsed path
-    const filters = buildSmartSearchFilters(intent, context);
+    const filters = buildSmartSearchFilters(intent, context, explicitFilters);
 
     const searchParams = {
       ...filters,
@@ -365,11 +409,15 @@ export async function executeSmartSearch(query, context = {}, pagination = {}) {
       searchResult = await searchService.searchWithoutLocation(searchParams);
     }
   } else {
-    // Fallback: raw query through existing ILIKE + SEARCH_SYNONYMS
+    // Fallback: raw query through existing ILIKE + SEARCH_SYNONYMS.
+    // Фильтры экрана идут и здесь — иначе экран результатов при недоступном AI
+    // показал бы выдачу шире выбранных фильтров.
     const fallbackParams = {
+      ...explicitFilters,
       search: query,
       city: context.city || null,
-      sortBy: (context.latitude && context.longitude) ? 'distance' : 'rating',
+      sortBy: explicitFilters.sortBy
+        || ((context.latitude && context.longitude) ? 'distance' : 'rating'),
       limit,
       offset,
       page,
@@ -385,7 +433,14 @@ export async function executeSmartSearch(query, context = {}, pagination = {}) {
   }
 
   // Log for analytics
-  logSearchQuery(query, intent, searchResult.pagination?.total || 0, isFallback, fromCache);
+  logSearchQuery(
+    query,
+    intent,
+    searchResult.pagination?.total || 0,
+    isFallback,
+    fromCache,
+    Object.keys(explicitFilters).length > 0,
+  );
 
   return {
     intent: intent || null,
@@ -397,14 +452,20 @@ export async function executeSmartSearch(query, context = {}, pagination = {}) {
 
 /**
  * Log search query for analytics (structured logger, no migration needed).
+ *
+ * `explicitFilters` — только ФАКТ наличия фильтров экрана, без значений:
+ * значения ничего не добавляют к разбору стоимости запроса, а строка лога и
+ * так несёт свободный текст пользователя. / Only whether screen filters were
+ * present, never which ones.
  */
-function logSearchQuery(rawQuery, parsedIntent, resultCount, isFallback, fromCache) {
+function logSearchQuery(rawQuery, parsedIntent, resultCount, isFallback, fromCache, hasExplicitFilters = false) {
   logger.info('smart_search_query', {
     query: rawQuery,
     intent: parsedIntent,
     resultCount,
     fallback: isFallback,
     fromCache,
+    explicitFilters: hasExplicitFilters,
     timestamp: new Date().toISOString(),
   });
 }

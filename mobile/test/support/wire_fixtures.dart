@@ -116,6 +116,65 @@ Map<String, dynamic> searchEnvelope({
       },
     };
 
+/// Конверт умного поиска — `POST /api/v1/search/smart`.
+///
+/// Отличается от классического наличием `intent` и `fallback`; блок
+/// `pagination` тот же самый, и это существенно: экран результатов листает обе
+/// выдачи одним кодом.
+///
+/// Источник: `backend/src/controllers/smartSearchController.js`.
+Map<String, dynamic> smartSearchEnvelope({
+  List<Map<String, dynamic>>? establishments,
+  Map<String, dynamic>? intent,
+  bool fallback = false,
+  int page = 1,
+  int limit = 20,
+  int total = 45,
+  int totalPages = 3,
+  bool hasNext = true,
+  bool hasPrevious = false,
+}) =>
+    <String, dynamic>{
+      'success': true,
+      'data': <String, dynamic>{
+        'intent': intent,
+        'establishments': establishments ?? [establishmentRow()],
+        'pagination': <String, dynamic>{
+          'page': page,
+          'limit': limit,
+          'total': total,
+          'totalPages': totalPages,
+          'hasNext': hasNext,
+          'hasPrevious': hasPrevious,
+        },
+        'fallback': fallback,
+      },
+    };
+
+/// Разбор фразы — то, что кладёт в ответ `parseIntent` после Zod-проверки.
+///
+/// Источник: `backend/src/services/smartSearchService.js` (схема intent).
+Map<String, dynamic> smartIntent({
+  String? dish,
+  String? category,
+  List<String>? cuisine,
+  double? priceMax,
+  String? location,
+  String? sort,
+  List<String> tags = const [],
+}) =>
+    <String, dynamic>{
+      'dish': dish,
+      'category': category,
+      'cuisine': cuisine,
+      'meal_type': null,
+      'price_max': priceMax,
+      'location': location,
+      'sort': sort,
+      'tags': tags,
+      'error': null,
+    };
+
 /// Строка отзыва во вложенной форме `author` — так отдаёт публичный список.
 Map<String, dynamic> reviewRow({
   String id = '33333333-3333-4333-8333-333333333333',

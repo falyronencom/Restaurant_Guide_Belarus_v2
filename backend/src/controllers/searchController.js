@@ -6,6 +6,7 @@
 
 import * as searchService from '../services/searchService.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { parseSearchFilterParams, presentFilters } from '../utils/searchFilterParams.js';
 
 /**
  * Search establishments by radius (or without location)
@@ -18,28 +19,24 @@ import { AppError } from '../middleware/errorHandler.js';
  * - categories (optional): Comma-separated categories
  * - cuisines (optional): Comma-separated cuisines
  * - priceRange (optional): Price range ($, $$, $$$, $$$$)
- * - minRating (optional): Minimum rating (1-5)
+ * - minRating / min_rating (optional): Minimum rating (1-5) - both spellings accepted
  * - limit (optional): Results per page (default: 20, max: 100)
  * - offset (optional): Pagination offset (default: 0)
+ *
+ * Разбор фильтров (categories/cuisines/priceRange/minRating/max_distance/
+ * radius/sort_by/hours_filter/features) вынесен в utils/searchFilterParams.js
+ * и общий с POST /search/smart. / Filter parsing is shared with the smart
+ * endpoint so one mobile screen gets the same filtering on both paths.
  */
 export async function searchEstablishments(req, res, next) {
   try {
     const {
       latitude,
       longitude,
-      radius,
-      max_distance,
       city,
-      categories,
-      cuisines,
-      priceRange,
-      minRating,
       limit,
       page,
       offset,
-      sort_by,
-      hours_filter,
-      features,
       search,
     } = req.query;
 
@@ -53,43 +50,12 @@ export async function searchEstablishments(req, res, next) {
       throw new AppError('Both latitude and longitude must be provided together', 422, 'VALIDATION_ERROR');
     }
 
-    // Parse radius (optional, only used with coordinates)
-    const radiusKm = radius ? parseFloat(radius) : 10;
-    if (radius && isNaN(radiusKm)) {
-      throw new AppError('Invalid radius', 422, 'VALIDATION_ERROR');
-    }
-
-    // Parse max_distance (optional, in meters from frontend, convert to km)
-    // When provided with coordinates, filters results to within this distance
-    let maxDistanceKm = null;
-    if (max_distance) {
-      const maxDistanceMeters = parseFloat(max_distance);
-      if (!isNaN(maxDistanceMeters) && maxDistanceMeters > 0) {
-        maxDistanceKm = maxDistanceMeters / 1000;
-      }
-      // If invalid or <= 0, skip distance filtering (graceful handling)
-    }
-
-    // Parse categories (optional, comma-separated or array)
-    const categoryList = categories
-      ? (Array.isArray(categories) ? categories : categories.split(',')).map(c => c.trim()).filter(Boolean)
-      : null;
-
-    // Parse cuisines (optional, comma-separated or array)
-    const cuisineList = cuisines
-      ? (Array.isArray(cuisines) ? cuisines : cuisines.split(',')).map(c => c.trim()).filter(Boolean)
-      : null;
-
-    // Parse priceRange (support multiple values: comma-separated or array)
-    const priceRangeList = priceRange
-      ? (Array.isArray(priceRange) ? priceRange : priceRange.split(',')).map(p => p.trim()).filter(Boolean)
-      : null;
-
-    // Parse minRating (optional)
-    const minRatingValue = minRating ? parseFloat(minRating) : null;
-    if (minRatingValue && (isNaN(minRatingValue) || minRatingValue < 1 || minRatingValue > 5)) {
-      throw new AppError('minRating must be between 1 and 5', 422, 'VALIDATION_ERROR');
-    }
+    // Фильтры выдачи разбирает общий парсер — те же правила, коды и тексты
+    // ошибок, что у POST /search/smart. Отсутствующие ключи выброшены, чтобы
+    // умолчания searchService остались в силе. / Filter dimensions share one
+    // parser with the smart endpoint; absent keys are dropped so the
+    // service's own parameter defaults still apply.
+    const filters = presentFilters(parseSearchFilterParams(req.query));
 
     // Parse pagination (support both page and offset)
     const limitValue = limit ? parseInt(limit, 10) : 20;
@@ -118,17 +84,6 @@ export async function searchEstablishments(req, res, next) {
       throw new AppError('Invalid limit parameter', 422, 'VALIDATION_ERROR');
     }
 
-    // Parse features (optional, array or comma-separated)
-    const featuresList = features
-      ? (Array.isArray(features) ? features : features.split(',')).map(f => f.trim()).filter(Boolean)
-      : null;
-
-    // Validate hours_filter if provided
-    const validHoursFilters = ['until_22', 'until_morning', '24_hours'];
-    if (hours_filter && !validHoursFilters.includes(hours_filter)) {
-      throw new AppError(`Invalid hours_filter. Must be one of: ${validHoursFilters.join(', ')}`, 422, 'VALIDATION_ERROR');
-    }
-
     // Execute search - with or without coordinates
     let result;
     if (hasCoordinates) {
@@ -136,35 +91,21 @@ export async function searchEstablishments(req, res, next) {
       result = await searchService.searchByRadius({
         latitude: lat,
         longitude: lon,
-        radius: radiusKm,
-        maxDistance: maxDistanceKm,
+        ...filters,
         city,
-        categories: categoryList,
-        cuisines: cuisineList,
-        priceRange: priceRangeList,
-        minRating: minRatingValue,
         limit: limitValue,
         offset: finalOffset,
         page: finalPage,
-        sortBy: sort_by,
-        hoursFilter: hours_filter,
-        features: featuresList,
         search: search?.trim() || null,
       });
     } else {
       // Search without coordinates - no distance filtering/sorting
       result = await searchService.searchWithoutLocation({
+        ...filters,
         city,
-        categories: categoryList,
-        cuisines: cuisineList,
-        priceRange: priceRangeList,
-        minRating: minRatingValue,
         limit: limitValue,
         offset: finalOffset,
         page: finalPage,
-        sortBy: sort_by,
-        hoursFilter: hours_filter,
-        features: featuresList,
         search: search?.trim() || null,
       });
     }

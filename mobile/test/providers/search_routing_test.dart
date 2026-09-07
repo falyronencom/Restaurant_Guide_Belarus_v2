@@ -1,0 +1,346 @@
+import 'package:dio/dio.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:restaurant_guide_mobile/models/filter_options.dart';
+import 'package:restaurant_guide_mobile/providers/establishments_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../support/wire_fixtures.dart';
+import '../support/wire_stand.dart';
+
+/// Какой ДВИЖОК выбирает провайдер и ЧТО он ему отдаёт.
+///
+/// Решение 07.09.2026: строка поиска на mobile всегда ищет умно. До него один и
+/// тот же запрос давал на двух экранах разную выдачу — «капучино» находило 10
+/// заведений на главной и 0 на экране результатов, — потому что экраны ходили в
+/// разные эндпоинты. Здесь проверяется сама развилка и то, что фильтры экрана
+/// переживают её в обе стороны.
+///
+/// Стенд стоит НИЖЕ границы сервиса (`test/support/wire_stand.dart`): фейк
+/// уровня сервиса отдал бы уже собранный объект и молча пропустил бы и выбор
+/// адреса, и имена полей в теле — ровно то, что здесь проверяется.
+void main() {
+  setUp(() {
+    // `setCity` пишет выбор в SharedPreferences мимо ожидания результата;
+    // без мока канал не зарегистрирован и запись валит тест исключением,
+    // хотя к проверяемому поведению отношения не имеет.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  /// Тело POST-запроса, как его увидел провод.
+  Map<String, dynamic> bodyOf(RequestOptions sent) =>
+      sent.data as Map<String, dynamic>;
+
+  group('Развилка движков', () {
+    test('непустая строка уходит в умный поиск', () async {
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('капучино');
+      await provider.searchEstablishments();
+
+      final sent = adapter.requests.single;
+      expect(sent.method, 'POST');
+      expect(sent.path, '/api/v1/search/smart');
+      expect(bodyOf(sent)['query'], 'капучино');
+      expect(provider.establishments, hasLength(1));
+      expect(provider.error, isNull);
+    });
+
+    test('пустая строка уходит в классический просмотр по фильтрам', () async {
+      final adapter = installWireStand((_) => jsonBody(searchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery(null);
+      await provider.searchEstablishments();
+
+      final sent = adapter.requests.single;
+      expect(sent.method, 'GET');
+      expect(sent.path, '/api/v1/search/establishments');
+    });
+
+    test('строка из одних пробелов — это пустая строка', () async {
+      // Иначе пользователь, случайно нажавший пробел, платил бы вызовом модели
+      // за запрос без единого слова.
+      final adapter = installWireStand((_) => jsonBody(searchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('   ');
+      await provider.searchEstablishments();
+
+      expect(adapter.requests.single.path, '/api/v1/search/establishments');
+    });
+
+    test('классический путь больше не шлёт search — фразу забрал умный', () async {
+      // Ветка выбирается по той же фразе, поэтому непустой `search` в
+      // query-строке означал бы, что развилка сломана.
+      final adapter = installWireStand((_) => jsonBody(searchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('');
+      await provider.searchEstablishments();
+
+      expect(adapter.requests.single.queryParameters.containsKey('search'),
+          isFalse);
+    });
+  });
+
+  group('Фильтры экрана переживают развилку', () {
+    test('умный поиск получает фильтры теми же именами, что и классический',
+        () async {
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('пицца за 20 рублей');
+      provider.setCity('Минск');
+      provider.setPriceFilters({PriceRange.medium});
+      provider.setHoursFilter(HoursFilter.until22);
+      provider.toggleCategoryFilter('Ресторан');
+      provider.toggleCuisineFilter('Итальянская');
+      provider.toggleAmenityFilter('wifi');
+      await provider.searchEstablishments();
+
+      final body = bodyOf(adapter.requests.single);
+      expect(body['city'], 'Минск');
+      expect(body['priceRange'], [PriceRange.medium.apiValue]);
+      expect(body['hours_filter'], HoursFilter.until22.apiValue);
+      expect(body['categories'], ['Ресторан']);
+      expect(body['cuisines'], ['Итальянская']);
+      expect(body['features'], ['wifi']);
+    });
+
+    test('сортировка, которую пользователь не выбирал, в тело НЕ уходит',
+        () async {
+      // Умолчание «по рейтингу» (и автоподмена на «по расстоянию» после
+      // выдачи GPS) — не выбор пользователя. Уйди оно как явный фильтр, по
+      // правилу слияния оно побило бы сортировку, выведенную из фразы: на
+      // «подешевле» превью главной (сортировку не шлёт вовсе) и список
+      // разошлись бы в порядке, и три карточки превью перестали бы быть
+      // первыми тремя списка.
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('подешевле');
+      await provider.searchEstablishments();
+
+      expect(bodyOf(adapter.requests.single).containsKey('sort_by'), isFalse);
+    });
+
+    test('классический путь сортировку шлёт всегда — там спорить не с чем',
+        () async {
+      // Сохранённое поведение: без фразы никакой выведенной сортировки нет,
+      // и порядок списка обязан совпадать с надписью на контроле.
+      final adapter = installWireStand((_) => jsonBody(searchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('');
+      await provider.searchEstablishments();
+
+      expect(adapter.requests.single.queryParameters['sort_by'], 'rating');
+    });
+
+    test('выбранная сортировка доезжает до умного поиска', () async {
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      // setSort сам запускает выборку — ждём её, иначе следующий вызов
+      // упрётся в защиту от параллельного поиска и молча ничего не сделает.
+      provider.setSort(SortOption.priceAsc);
+      await pumpEventQueue();
+
+      provider.setSearchQuery('кофе');
+      await provider.searchEstablishments();
+
+      expect(bodyOf(adapter.requests.last)['sort_by'], 'price_asc');
+    });
+
+    test('пустые наборы фильтров в тело не попадают вовсе', () async {
+      // Пустой `priceRange` на бэкенде уходит в SQL как `= ANY('{}')` и
+      // обнуляет выдачу (голая проверка истинности в `searchService`);
+      // остальные списки там защищены `length > 0`, но правило держим общим.
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('кофе');
+      await provider.searchEstablishments();
+
+      final body = bodyOf(adapter.requests.single);
+      expect(body.containsKey('categories'), isFalse);
+      expect(body.containsKey('cuisines'), isFalse);
+      expect(body.containsKey('features'), isFalse);
+      expect(body.containsKey('priceRange'), isFalse);
+      expect(body.containsKey('hours_filter'), isFalse);
+    });
+
+    test('размер страницы явный: 20, а не превьюшные 3', () async {
+      // У `searchSmart` умолчание limit = 3 — оно для превью на главной.
+      // Забыть про него значило бы показать на экране результатов три карточки.
+      final adapter = installWireStand((_) => jsonBody(smartSearchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('кофе');
+      await provider.searchEstablishments();
+
+      expect(bodyOf(adapter.requests.single)['limit'], 20);
+    });
+  });
+
+  group('Пагинация умной выдачи', () {
+    test('вторая страница уходит в тот же эндпоинт с page: 2', () async {
+      final adapter = installWireStand(
+        (_) => jsonBody(smartSearchEnvelope(page: 1, limit: 20, total: 45)),
+      );
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('кофе');
+      await provider.searchEstablishments();
+      await provider.searchEstablishments(page: 2, append: true);
+
+      expect(adapter.requests, hasLength(2));
+      expect(adapter.requests.last.path, '/api/v1/search/smart');
+      expect(bodyOf(adapter.requests.last)['page'], 2);
+    });
+
+    test('totalPages из ответа доезжает до провайдера — иначе список замрёт',
+        () async {
+      // `SmartSearchResult` раньше нёс только `total`; экран считает «есть ли
+      // ещё» по `page < totalPages`, и единица означала бы конец списка.
+      installWireStand(
+        (_) => jsonBody(smartSearchEnvelope(page: 1, limit: 20, total: 45)),
+      );
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('кофе');
+      await provider.searchEstablishments();
+
+      expect(provider.paginationMeta?.totalPages, 3);
+      expect(provider.paginationMeta?.perPage, 20);
+      expect(provider.totalResults, 45);
+      expect(provider.hasMorePages, isTrue);
+    });
+
+    test('последняя страница закрывает подгрузку', () async {
+      installWireStand(
+        (_) => jsonBody(
+          smartSearchEnvelope(page: 3, limit: 20, total: 45, totalPages: 3),
+        ),
+      );
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('кофе');
+      await provider.searchEstablishments(page: 3);
+
+      expect(provider.hasMorePages, isFalse);
+    });
+  });
+
+  group('Разбор фразы и отказ AI', () {
+    test('intent доезжает до провайдера', () async {
+      installWireStand(
+        (_) => jsonBody(smartSearchEnvelope(
+          intent: smartIntent(dish: 'пицца', priceMax: 20),
+        )),
+      );
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('пицца за 20 рублей');
+      await provider.searchEstablishments();
+
+      expect(provider.searchIntent?.dish, 'пицца');
+      expect(provider.searchIntent?.priceMax, 20);
+      expect(provider.searchFallback, isFalse);
+    });
+
+    test('признак отказа AI поднимается наверх', () async {
+      installWireStand((_) => jsonBody(smartSearchEnvelope(fallback: true)));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('пицца');
+      await provider.searchEstablishments();
+
+      expect(provider.searchFallback, isTrue);
+    });
+
+    test('переход на классический путь сбрасывает разбор прошлой фразы',
+        () async {
+      // Иначе шапка «пицца · до 20 BYN» осталась бы висеть над выдачей,
+      // собранной уже без фразы.
+      installWireStand((options) => options.path.contains('smart')
+          ? jsonBody(smartSearchEnvelope(
+              intent: smartIntent(dish: 'пицца'), fallback: true))
+          : jsonBody(searchEnvelope()));
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('пицца');
+      await provider.searchEstablishments();
+      expect(provider.searchIntent?.dish, 'пицца');
+
+      provider.setSearchQuery('');
+      await provider.searchEstablishments();
+
+      expect(provider.searchIntent, isNull);
+      expect(provider.searchFallback, isFalse);
+    });
+  });
+
+  group('Ошибки', () {
+    test('429 объясняет, что ждать надо минуту', () async {
+      // Умный поиск ограничен 30 запросами в минуту на IP. Общий текст
+      // «попробуйте позже» не подсказывает, сколько ждать, а повтор сразу
+      // упрётся в тот же лимит.
+      installWireStand(
+        (_) => jsonBody(
+          <String, dynamic>{
+            'success': false,
+            'error': <String, dynamic>{'code': 'RATE_LIMIT_EXCEEDED'},
+          },
+          status: 429,
+        ),
+      );
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('кофе');
+      await provider.searchEstablishments();
+
+      expect(provider.error, 'Слишком много запросов, подождите минуту');
+      expect(provider.isLoading, isFalse);
+    });
+
+    test('429 на классическом пути срока не называет', () async {
+      // Там действует глобальный часовой лимит, а не минутный лимит умного
+      // поиска: совет «подождите минуту» врал бы в другую сторону.
+      installWireStand(
+        (_) => jsonBody(
+          <String, dynamic>{
+            'success': false,
+            'error': <String, dynamic>{'code': 'RATE_LIMIT_EXCEEDED'},
+          },
+          status: 429,
+        ),
+      );
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('');
+      await provider.searchEstablishments();
+
+      expect(provider.error, 'Слишком много запросов. Попробуйте позже.');
+    });
+
+    test('прочие отказы сохраняют прежний общий текст', () async {
+      installWireStand(
+        (_) => jsonBody(
+          <String, dynamic>{
+            'success': false,
+            'error': <String, dynamic>{'code': 'BAD'},
+          },
+          status: 400,
+        ),
+      );
+
+      final provider = EstablishmentsProvider();
+      provider.setSearchQuery('кофе');
+      await provider.searchEstablishments();
+
+      expect(provider.error, 'An error occurred. Please try again.');
+    });
+  });
+}

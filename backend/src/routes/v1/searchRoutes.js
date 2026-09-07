@@ -109,6 +109,16 @@ router.get('/map', searchController.searchMap);
  * - limit (optional): Results per page (default: 20, max: 100)
  * - page (optional): Page number (default: 1)
  *
+ * Screen filters - same names the classic GET reads from the query string,
+ * parsed by the same utils/searchFilterParams.js (array or csv where a list):
+ * - categories, cuisines, priceRange, features
+ * - minRating / min_rating (1-5)
+ * - max_distance (metres), radius (km)
+ * - sort_by (rating | price_asc | price_desc | distance)
+ * - hours_filter (until_22 | until_morning | 24_hours)
+ * Filter errors answer 422 (as on the classic endpoint); body errors
+ * (query, coordinates) answer 400.
+ *
  * Response includes:
  * - intent: Parsed AI intent (categories, cuisines, tags, etc.) or null
  * - establishments: Array of matching establishments

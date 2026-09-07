@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:restaurant_guide_mobile/config/cities.dart';
@@ -6,6 +7,7 @@ import 'package:restaurant_guide_mobile/models/filter_options.dart';
 import 'package:restaurant_guide_mobile/services/account_scope.dart';
 import 'package:restaurant_guide_mobile/services/establishments_service.dart';
 import 'package:restaurant_guide_mobile/services/location_service.dart';
+import 'package:restaurant_guide_mobile/services/smart_search_service.dart';
 
 /// Sort options for establishment list
 enum SortOption {
@@ -46,12 +48,25 @@ enum SortOption {
 /// Establishments state provider
 /// Manages search results, filters, and establishment details
 class EstablishmentsProvider with ChangeNotifier {
+  /// Размер страницы. Задан явно, потому что у двух движков разные
+  /// умолчания: у классического поиска 20, у умного 3 (превью на главной).
+  /// Без явного значения экран результатов показал бы три карточки.
+  static const int _pageSize = 20;
+
   final EstablishmentsService _service;
+  // Синглтон: подменяется в тестах на уровне транспорта ApiClient
+  // (test/support/wire_stand.dart), поэтому в конструкторе не нужен.
+  final SmartSearchService _smartSearchService = SmartSearchService();
   final LocationService _locationService = LocationService();
 
   // Search results state
   List<Establishment> _establishments = [];
   PaginationMeta? _paginationMeta;
+
+  /// Разбор фразы и признак отказа AI с последней умной выдачи.
+  /// null — искали по фильтрам, строка была пуста.
+  SmartSearchIntent? _searchIntent;
+  bool _searchFallback = false;
   bool _isLoading = false;
   bool _isLoadingMore = false;
   String? _error;
@@ -65,6 +80,21 @@ class EstablishmentsProvider with ChangeNotifier {
 
   // Sort state
   SortOption _currentSort = SortOption.rating;
+
+  /// Трогал ли пользователь контрол сортировки САМ.
+  ///
+  /// Умному поиску сортировка уходит только если трогал. Иначе значение,
+  /// которое пользователь не выбирал (умолчание «по рейтингу» или
+  /// автоматический переход на «по расстоянию» после выдачи GPS —
+  /// [fetchUserLocation]), считалось бы явным и по правилу слияния
+  /// побеждало бы сортировку, выведенную из самой фразы. Тогда «подешевле»
+  /// упорядочивало бы превью на главной (оно сортировку не шлёт вовсе) и НЕ
+  /// упорядочивало список — три карточки превью перестали бы быть первыми
+  /// тремя списка. Ровно то расхождение, ради которого затевалась развилка.
+  /// / Only a sort the user actually picked counts as explicit; otherwise a
+  /// default the user never chose would silently outrank the sort inferred
+  /// from their own phrase, and the preview would stop matching the list.
+  bool _sortTouched = false;
 
   // Current filters (simple)
   String? _selectedCity;
@@ -113,6 +143,12 @@ class EstablishmentsProvider with ChangeNotifier {
 
   /// Pagination metadata
   PaginationMeta? get paginationMeta => _paginationMeta;
+
+  /// Как умный поиск понял последнюю фразу (null — искали по фильтрам)
+  SmartSearchIntent? get searchIntent => _searchIntent;
+
+  /// Последняя выдача собрана в обход AI (он был недоступен)
+  bool get searchFallback => _searchFallback;
 
   /// Whether establishments are being loaded (initial load)
   bool get isLoading => _isLoading;
@@ -217,6 +253,10 @@ class EstablishmentsProvider with ChangeNotifier {
     int page = 1,
     bool append = false,
   }) async {
+    // Развилка движков считается ДО try: её же читает разбор ошибки в catch —
+    // текст про лимит запросов честен только для умного пути.
+    final queryText = _searchQuery?.trim() ?? '';
+
     // Don't start new search if already loading
     if (append) {
       if (_isLoadingMore) return;
@@ -241,28 +281,71 @@ class EstablishmentsProvider with ChangeNotifier {
           ? SortOption.rating
           : _currentSort;
 
-      final result = await _service.searchEstablishments(
-        page: page,
-        city: _selectedCity,
-        categories: _categoryFilters.isNotEmpty
-            ? _categoryFilters.toList()
-            : null,
-        cuisines: _cuisineFilters.isNotEmpty
-            ? _cuisineFilters.toList()
-            : null,
-        priceRanges: _priceFilters.isNotEmpty
-            ? _priceFilters.map((p) => p.apiValue).toList()
-            : null,
-        latitude: latitude,
-        longitude: longitude,
-        maxDistance: hasRealLocation ? _distanceFilter.toMeters()?.toDouble() : null,
-        search: _searchQuery,
-        sortBy: effectiveSort.toApiValue(),
-        hoursFilter: _hoursFilter?.apiValue,
-        features: _amenityFilters.isNotEmpty
-            ? _amenityFilters.toList()
-            : null,
-      );
+      final categories =
+          _categoryFilters.isNotEmpty ? _categoryFilters.toList() : null;
+      final cuisines =
+          _cuisineFilters.isNotEmpty ? _cuisineFilters.toList() : null;
+      final priceRanges = _priceFilters.isNotEmpty
+          ? _priceFilters.map((p) => p.apiValue).toList()
+          : null;
+      final maxDistance =
+          hasRealLocation ? _distanceFilter.toMeters()?.toDouble() : null;
+      final features =
+          _amenityFilters.isNotEmpty ? _amenityFilters.toList() : null;
+
+      // Один движок для текста. Пока в строке есть фраза, выдачу собирает
+      // умный поиск: он разбирает её по меню, синонимам и бюджету. Пустая
+      // строка — обычный просмотр по фильтрам. Фильтры экрана уходят в обоих
+      // случаях, поэтому смена режима не теряет ни одного фильтра. / Text
+      // always goes to the smart engine, an empty field to the classic one;
+      // the screen's filters travel with both.
+      final PaginatedEstablishments result;
+      if (queryText.isNotEmpty) {
+        final smart = await _smartSearchService.searchSmart(
+          query: queryText,
+          latitude: latitude,
+          longitude: longitude,
+          city: _selectedCity,
+          categories: categories,
+          cuisines: cuisines,
+          priceRanges: priceRanges,
+          maxDistance: maxDistance,
+          sortBy: _sortTouched ? effectiveSort.toApiValue() : null,
+          hoursFilter: _hoursFilter?.apiValue,
+          features: features,
+          page: page,
+          limit: _pageSize,
+        );
+        _searchIntent = smart.intent;
+        _searchFallback = smart.fallback;
+        result = PaginatedEstablishments(
+          data: smart.results,
+          meta: PaginationMeta(
+            total: smart.total,
+            page: smart.page,
+            perPage: smart.limit,
+            totalPages: smart.totalPages,
+          ),
+        );
+      } else {
+        _searchIntent = null;
+        _searchFallback = false;
+        result = await _service.searchEstablishments(
+          page: page,
+          perPage: _pageSize,
+          city: _selectedCity,
+          categories: categories,
+          cuisines: cuisines,
+          priceRanges: priceRanges,
+          latitude: latitude,
+          longitude: longitude,
+          maxDistance: maxDistance,
+          search: null,
+          sortBy: effectiveSort.toApiValue(),
+          hoursFilter: _hoursFilter?.apiValue,
+          features: features,
+        );
+      }
 
       if (append) {
         _establishments.addAll(result.data);
@@ -275,7 +358,7 @@ class EstablishmentsProvider with ChangeNotifier {
       _paginationMeta = result.meta;
       notifyListeners();
     } catch (e) {
-      _error = _extractErrorMessage(e);
+      _error = _extractErrorMessage(e, smartPath: queryText.isNotEmpty);
       if (append) {
         _isLoadingMore = false;
       } else {
@@ -302,6 +385,9 @@ class EstablishmentsProvider with ChangeNotifier {
 
   /// Set sort option and refresh results
   void setSort(SortOption sort) {
+    // Отмечаем выбор ДО сравнения: повторный тап по уже выбранному пункту —
+    // тоже осознанный выбор пользователя.
+    _sortTouched = true;
     if (_currentSort == sort) return;
     _currentSort = sort;
     notifyListeners();
@@ -641,11 +727,27 @@ class EstablishmentsProvider with ChangeNotifier {
   }
 
   /// Extract user-friendly error message
-  String _extractErrorMessage(Object error) {
+  String _extractErrorMessage(Object error, {bool smartPath = false}) {
     final errorStr = error.toString();
 
     if (errorStr.contains('Network') || errorStr.contains('Connection')) {
       return 'Network error. Please check your internet connection.';
+    }
+    // Код статуса берём у самого исключения, а не из его текста: `ApiClient`
+    // пересобирает DioException без `message`, и в `toString()` попадают лишь
+    // тип и подставленный текст — числа 429 там нет вовсе. Проверки по строке
+    // ниже оставлены для ошибок, прилетающих не от Dio. / The status code is
+    // read from the exception, not from its text: the rebuilt DioException
+    // prints no status code at all.
+    if (error is DioException && error.response?.statusCode == 429) {
+      // Умный поиск ограничен 30 запросами в минуту на IP: за ним стоит вызов
+      // внешней модели. Общий текст «попробуйте позже» здесь врёт — ждать надо
+      // именно минуту, и повтор сразу упрётся в тот же лимит. На остальных
+      // путях действует глобальный часовой лимит, и совет «минуту» врал бы
+      // уже в другую сторону — поэтому срок называем только там, где знаем.
+      return smartPath
+          ? 'Слишком много запросов, подождите минуту'
+          : 'Слишком много запросов. Попробуйте позже.';
     }
     if (errorStr.contains('404')) {
       return 'Establishment not found.';

@@ -8,15 +8,33 @@ class SmartSearchResult {
   final int total;
   final bool fallback;
 
+  /// Пагинация целиком, а не только `total`. Экран результатов листает эту же
+  /// выдачу, и без `totalPages`/`hasNext` подгрузка второй страницы не
+  /// состоится: список замрёт на первой без единой ошибки. / The results
+  /// screen paginates this response — with only `total` it would silently
+  /// stop after page one.
+  final int page;
+  final int limit;
+  final int totalPages;
+  final bool hasNext;
+
   SmartSearchResult({
     this.intent,
     required this.results,
     required this.total,
     required this.fallback,
+    this.page = 1,
+    this.limit = 20,
+    this.totalPages = 1,
+    this.hasNext = false,
   });
 
   factory SmartSearchResult.fromJson(Map<String, dynamic> json) {
     final data = json['data'] ?? json;
+    final pagination = data['pagination'] as Map<String, dynamic>? ?? const {};
+    final total = pagination['total'] as int? ?? 0;
+    final limit = pagination['limit'] as int? ?? 20;
+    final page = pagination['page'] as int? ?? 1;
     return SmartSearchResult(
       intent: data['intent'] != null
           ? SmartSearchIntent.fromJson(data['intent'] as Map<String, dynamic>)
@@ -24,8 +42,15 @@ class SmartSearchResult {
       results: (data['establishments'] as List? ?? [])
           .map((e) => Establishment.fromJson(e as Map<String, dynamic>))
           .toList(),
-      total: data['pagination']?['total'] as int? ?? 0,
+      total: total,
       fallback: data['fallback'] as bool? ?? true,
+      page: page,
+      limit: limit,
+      // Бэкенд шлёт totalPages; если поле пропало — считаем сами, а не
+      // подставляем 1: единица означала бы «страниц больше нет».
+      totalPages: pagination['totalPages'] as int? ??
+          (limit > 0 ? (total + limit - 1) ~/ limit : 1),
+      hasNext: pagination['hasNext'] as bool? ?? (page * limit < total),
     );
   }
 }
@@ -103,11 +128,25 @@ class SmartSearchService {
   SmartSearchService._internal() : _apiClient = ApiClient();
 
   /// Execute smart search via POST /api/v1/search/smart
+  ///
+  /// Имена фильтров в теле — те же, что `EstablishmentsService` кладёт в
+  /// query-строку классического поиска: бэкенд разбирает оба эндпоинта одним
+  /// парсером. Расхождение в написании означало бы, что фильтр молча теряется
+  /// ровно тогда, когда строка поиска не пуста. / The body reuses the classic
+  /// endpoint's parameter names — the backend parses both with one parser.
   Future<SmartSearchResult> searchSmart({
     required String query,
     double? latitude,
     double? longitude,
     String? city,
+    List<String>? categories,
+    List<String>? cuisines,
+    List<String>? priceRanges,
+    double? minRating,
+    double? maxDistance,
+    String? sortBy,
+    String? hoursFilter,
+    List<String>? features,
     int limit = 3,
     int page = 1,
   }) async {
@@ -120,6 +159,24 @@ class SmartSearchService {
     if (latitude != null) body['latitude'] = latitude;
     if (longitude != null) body['longitude'] = longitude;
     if (city != null) body['city'] = city;
+    // Пустой список не отправляем вовсе: на бэкенде он стал бы условием и
+    // обнулил выдачу.
+    if (categories != null && categories.isNotEmpty) {
+      body['categories'] = categories;
+    }
+    if (cuisines != null && cuisines.isNotEmpty) {
+      body['cuisines'] = cuisines;
+    }
+    if (priceRanges != null && priceRanges.isNotEmpty) {
+      body['priceRange'] = priceRanges;
+    }
+    if (minRating != null) body['min_rating'] = minRating;
+    if (maxDistance != null) body['max_distance'] = maxDistance;
+    if (sortBy != null) body['sort_by'] = sortBy;
+    if (hoursFilter != null) body['hours_filter'] = hoursFilter;
+    if (features != null && features.isNotEmpty) {
+      body['features'] = features;
+    }
 
     final response = await _apiClient.post(
       '/api/v1/search/smart',

@@ -571,3 +571,185 @@ describe('Smart Search - Dish path (intent replayed from cache)', () => {
     expect(response.body.data.pagination.total).toBe(0);
   });
 });
+// --- Фильтры экрана на умном эндпоинте --------------------------------------
+//
+// Решение 07.09.2026: строка поиска на mobile всегда ходит сюда, значит экран
+// результатов присылает вместе с фразой свои фильтры, сортировку и страницу.
+// Ниже — что с ними происходит на живой базе: intent сеется в Redis (OpenRouter
+// в тестах недоступен), затем запрос идёт через настоящий контроллер и SQL.
+
+describe('Smart Search - фильтры экрана в теле запроса', () => {
+  const seededHashes = new Set();
+
+  beforeAll(async () => {
+    if (!redisClient.isOpen) {
+      await connectRedis();
+    }
+  });
+
+  afterAll(async () => {
+    for (const hash of seededHashes) {
+      await deleteKey(`smartsearch:${hash}`).catch(() => {});
+    }
+  });
+
+  async function seedIntent(queryText, intent) {
+    expect(redisClient.isOpen).toBe(true);
+    const hash = intentCacheHash(queryText);
+    seededHashes.add(hash);
+    await smartSearchService.cacheIntent(hash, intent, 60);
+    // Доказать, что посев лёг: иначе запрос ушёл бы на ветку fallback и
+    // проверки ниже мерили бы совсем другой путь.
+    expect(await smartSearchService.getCachedIntent(hash)).toEqual(intent);
+  }
+
+  function plainIntent(extra = {}) {
+    return {
+      cuisine: null, category: null, dish: null, meal_type: null, price_max: null,
+      location: null, sort: null, tags: [], error: null, ...extra,
+    };
+  }
+
+  test('явный ярус цены сужает выдачу умного поиска', async () => {
+    await seedIntent('поесть', plainIntent());
+
+    const all = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'поесть', city: 'Минск' });
+
+    expect(all.status).toBe(200);
+    expect(all.body.data.fallback).toBe(false);
+    expect(all.body.data.establishments.map(e => e.name).sort())
+      .toEqual(['Бургер Хаус', 'Итальяно', 'Кофе Тайм']);
+
+    const narrowed = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'поесть', city: 'Минск', priceRange: ['$$$'] });
+
+    expect(narrowed.status).toBe(200);
+    expect(narrowed.body.data.establishments.map(e => e.name)).toEqual(['Итальяно']);
+    expect(narrowed.body.data.pagination.total).toBe(1);
+  });
+
+  test('явный ярус побеждает ярус, выведенный из «до 10 рублей»', async () => {
+    // price_max без блюда подставляет ['$'] — это дало бы Бургер Хаус и Кофе
+    // Тайм. Карточка '$$$' с экрана оставляет только Итальяно.
+    await seedIntent('поесть до 10 рублей', plainIntent({ price_max: 10 }));
+
+    const inferred = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'поесть до 10 рублей', city: 'Минск' });
+
+    expect(inferred.body.data.establishments.map(e => e.name).sort())
+      .toEqual(['Бургер Хаус', 'Кофе Тайм']);
+
+    const explicit = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'поесть до 10 рублей', city: 'Минск', priceRange: ['$$$'] });
+
+    expect(explicit.body.data.establishments.map(e => e.name)).toEqual(['Итальяно']);
+  });
+
+  test('явная сортировка применяется к выдаче', async () => {
+    await seedIntent('поесть в минске', plainIntent({ sort: 'rating' }));
+
+    const response = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'поесть в минске', city: 'Минск', sort_by: 'price_desc' });
+
+    expect(response.status).toBe(200);
+    // '$$$' Итальяно впереди двух '$'; порядок внутри яруса — по имени.
+    expect(response.body.data.establishments.map(e => e.name))
+      .toEqual(['Итальяно', 'Бургер Хаус', 'Кофе Тайм']);
+  });
+
+  test('страница 2 отдаёт следующую карточку и честную пагинацию', async () => {
+    await seedIntent('минские места', plainIntent());
+
+    const first = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'минские места', city: 'Минск', limit: 1, page: 1 });
+    const second = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'минские места', city: 'Минск', limit: 1, page: 2 });
+
+    expect(first.body.data.pagination)
+      .toMatchObject({ page: 1, limit: 1, total: 3, totalPages: 3, hasNext: true, hasPrevious: false });
+    expect(second.body.data.pagination)
+      .toMatchObject({ page: 2, limit: 1, total: 3, totalPages: 3, hasNext: true, hasPrevious: true });
+    expect(second.body.data.establishments).toHaveLength(1);
+    expect(second.body.data.establishments[0].id)
+      .not.toBe(first.body.data.establishments[0].id);
+  });
+
+  test('фильтры не входят в ключ кэша: один посев обслуживает разные фильтры', async () => {
+    // Стоимостная модель CAT-C-2.2 держится на этом: переключение фильтров с
+    // той же фразой — попадание в кэш, один SQL, без обращения к AI.
+    await seedIntent('кэш-проверка', plainIntent());
+
+    const a = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'кэш-проверка', city: 'Минск', priceRange: ['$'] });
+    const b = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'кэш-проверка', city: 'Минск', priceRange: ['$$$'] });
+
+    expect(a.body.data.fallback).toBe(false);
+    expect(b.body.data.fallback).toBe(false);
+    expect(a.body.data.establishments.map(e => e.name).sort())
+      .toEqual(['Бургер Хаус', 'Кофе Тайм']);
+    expect(b.body.data.establishments.map(e => e.name)).toEqual(['Итальяно']);
+  });
+
+  test('негодный hours_filter — 422 в конверте errorHandler', async () => {
+    // Ошибка ФИЛЬТРА: её бросает общий парсер и оформляет errorHandler,
+    // поэтому код тот же, что у GET /search/establishments, а не 400 проверок
+    // тела. Конверт при этом ДРУГОЙ, чем у 400: errorHandler кладёт текст в
+    // body.message, а внутри error оставляет только code. Клиент, который
+    // читает error.message, на этом пути получит undefined — этот тест держит
+    // форму, чтобы разница не открылась на устройстве. / The 422 envelope is
+    // the errorHandler's: message at top level, error carries only the code.
+    const response = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'пицца', city: 'Минск', hours_filter: 'bogus' });
+
+    expect(response.status).toBe(422);
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(response.body.message).toContain('until_22');
+    expect(response.body.error.message).toBeUndefined();
+  });
+
+  test('пустой query остаётся 400 в конверте контроллера, даже когда фильтры негодны', async () => {
+    // Порядок проверок: тело сначала. Иначе пользователь с пустой строкой
+    // получал бы жалобу на фильтр вместо жалобы на запрос.
+    // И встречная половина предыдущего теста: 400 пишет сам контроллер, там
+    // текст лежит ВНУТРИ error.
+    const response = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: '   ', hours_filter: 'bogus' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    expect(response.body.error.message).toContain('query');
+  });
+
+  test('при отказе AI фильтры экрана всё равно применяются', async () => {
+    // Без посева intent OpenRouter недоступен → ветка fallback. Она обязана
+    // вести себя как классический эндпоинт С фильтрами: иначе отключение AI
+    // молча РАСШИРЯЕТ выдачу вместо того, чтобы её сузить.
+    const wide = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'кофе', city: 'Минск' });
+
+    expect(wide.body.data.fallback).toBe(true);
+    expect(wide.body.data.establishments.map(e => e.name)).toEqual(['Кофе Тайм']);
+
+    const filtered = await request(app)
+      .post('/api/v1/search/smart')
+      .send({ query: 'кофе', city: 'Минск', priceRange: ['$$$'] });
+
+    expect(filtered.body.data.fallback).toBe(true);
+    expect(filtered.body.data.establishments).toEqual([]);
+    expect(filtered.body.data.pagination.total).toBe(0);
+  });
+});

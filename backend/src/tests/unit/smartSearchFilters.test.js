@@ -190,3 +190,136 @@ describe('buildSmartSearchFilters — tags alongside dish (prod defect 07.09.202
     expect(filters.dishOrSearch).toBeUndefined();
   });
 });
+// ─── Явные фильтры экрана против догадок разбора ─────────────────────────────
+//
+// Решение 07.09.2026: строка поиска на mobile всегда ходит в умный эндпоинт,
+// значит фильтры экрана (цена, часы, удобства, сортировка) должны работать и
+// там. Спор возникает там, где разбор фразы подставил значение в ТОЙ ЖЕ
+// размерности: «недорого» → ярус цены против снятой пользователем карточки
+// «$$». Правило — контрол сильнее догадки; разные размерности складываются.
+
+function intentOf(extra = {}) {
+  return {
+    dish: null, category: null, cuisine: null, price_max: null,
+    meal_type: null, location: null, sort: null, tags: [], error: null, ...extra,
+  };
+}
+
+describe('buildSmartSearchFilters — явное сильнее выведенного', () => {
+  test('явный ярус цены заменяет ярусную подстановку из price_max', () => {
+    // «до 10 рублей» без блюда подставляет ['$']; пользователь при этом
+    // держит включённой карточку '$$$'. Побеждает карточка.
+    const filters = buildSmartSearchFilters(
+      intentOf({ price_max: 10 }),
+      {},
+      { priceRange: ['$$$'] },
+    );
+
+    expect(filters.priceRange).toEqual(['$$$']);
+  });
+
+  test('без явного яруса ярусная подстановка работает как раньше', () => {
+    // Сохранённое поведение: если этот тест позеленеет при вырезанной
+    // подстановке, он ничего не сторожит.
+    const filters = buildSmartSearchFilters(intentOf({ price_max: 10 }), {});
+
+    expect(filters.priceRange).toEqual(['$']);
+  });
+
+  test('бюджет блюда и явный ярус цены сосуществуют — размерности разные', () => {
+    // priceMaxByn — цена позиции меню, priceRange — ценовой класс заведения.
+    // «пицца за 20 рублей» с карточкой '$$' = позиция дешевле 20 BYN в
+    // заведении класса '$$', а не выбор одного из двух.
+    const filters = buildSmartSearchFilters(
+      intentOf({ dish: 'пицца', price_max: 20 }),
+      {},
+      { priceRange: ['$$'] },
+    );
+
+    expect(filters.priceMaxByn).toBe(20);
+    expect(filters.priceRange).toEqual(['$$']);
+  });
+
+  test('без явного яруса бюджет блюда по-прежнему НЕ подставляет ярус', () => {
+    const filters = buildSmartSearchFilters(intentOf({ dish: 'пицца', price_max: 20 }), {});
+
+    expect(filters.priceMaxByn).toBe(20);
+    expect(filters.priceRange).toBeUndefined();
+  });
+
+  test('явная сортировка сильнее intent.sort', () => {
+    const filters = buildSmartSearchFilters(
+      intentOf({ sort: 'rating' }),
+      {},
+      { sortBy: 'price_asc' },
+    );
+
+    expect(filters.sortBy).toBe('price_asc');
+  });
+
+  test('явная сортировка сильнее умолчания по координатам', () => {
+    const filters = buildSmartSearchFilters(
+      intentOf(),
+      { latitude: 53.9, longitude: 27.5 },
+      { sortBy: 'rating' },
+    );
+
+    expect(filters.sortBy).toBe('rating');
+  });
+
+  test('без явной сортировки умолчание по координатам прежнее', () => {
+    expect(buildSmartSearchFilters(intentOf(), { latitude: 53.9, longitude: 27.5 }).sortBy)
+      .toBe('distance');
+    expect(buildSmartSearchFilters(intentOf(), {}).sortBy).toBe('rating');
+  });
+
+  test('явные категории и кухни заменяют выведенные из фразы', () => {
+    const filters = buildSmartSearchFilters(
+      intentOf({ category: 'Кофейня', cuisine: ['Итальянская'] }),
+      {},
+      { categories: ['Бар'], cuisines: ['Японская'] },
+    );
+
+    expect(filters.categories).toEqual(['Бар']);
+    expect(filters.cuisines).toEqual(['Японская']);
+  });
+
+  test('размерности, которых разбор не касается, пробрасываются как есть', () => {
+    const filters = buildSmartSearchFilters(intentOf(), {}, {
+      hoursFilter: 'until_22',
+      features: ['wifi', 'terrace'],
+      minRating: 4,
+      maxDistance: 3,
+      radius: 5,
+    });
+
+    expect(filters.hoursFilter).toBe('until_22');
+    expect(filters.features).toEqual(['wifi', 'terrace']);
+    expect(filters.minRating).toBe(4);
+    expect(filters.maxDistance).toBe(3);
+    expect(filters.radius).toBe(5);
+  });
+
+  test('город из фразы по-прежнему сильнее города контекста', () => {
+    // Намеренно не тронуто: город, названный вслух, тоже явный.
+    const filters = buildSmartSearchFilters(
+      intentOf({ location: 'Гомель' }),
+      { city: 'Минск' },
+      { categories: ['Бар'] },
+    );
+
+    expect(filters.city).toBe('Гомель');
+  });
+
+  test('пустые явные фильтры не добавляют ключей вовсе', () => {
+    // Ключ со значением null затёр бы умолчание searchService; ключ с пустым
+    // массивом обнулил бы выдачу в SQL.
+    const withEmpty = buildSmartSearchFilters(intentOf({ category: 'Кофейня' }), {}, {});
+    const withNothing = buildSmartSearchFilters(intentOf({ category: 'Кофейня' }), {});
+
+    expect(withEmpty).toEqual(withNothing);
+    expect(withEmpty.categories).toEqual(['Кофейня']);
+    expect('hoursFilter' in withEmpty).toBe(false);
+    expect('features' in withEmpty).toBe(false);
+  });
+});

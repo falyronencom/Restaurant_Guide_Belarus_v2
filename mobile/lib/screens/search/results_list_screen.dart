@@ -6,6 +6,7 @@ import 'package:restaurant_guide_mobile/config/theme.dart';
 import 'package:restaurant_guide_mobile/providers/establishments_provider.dart';
 import 'package:restaurant_guide_mobile/providers/auth_provider.dart';
 import 'package:restaurant_guide_mobile/widgets/establishment_card.dart';
+import 'package:restaurant_guide_mobile/widgets/results_search_bar.dart';
 import 'package:restaurant_guide_mobile/config/dimensions.dart';
 import 'package:restaurant_guide_mobile/screens/map/map_screen.dart';
 import 'package:restaurant_guide_mobile/services/location_service.dart';
@@ -839,53 +840,10 @@ class _ResultsListScreenState extends State<ResultsListScreen> {
 
   /// Build search bar (Figma design — back button inside input field)
   Widget _buildSearchBar() {
-    return Container(
-      height: 64,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F5F5),
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: TextField(
-        controller: _searchController,
-        style: const TextStyle(
-          fontSize: 18,
-          color: AppTheme.textPrimary,
-        ),
-        decoration: InputDecoration(
-          hintText: 'С чего начнем?',
-          hintStyle: const TextStyle(
-            fontSize: 18,
-            color: _greyText,
-            fontWeight: FontWeight.w400,
-          ),
-          border: InputBorder.none,
-          // Поле само рисует свою форму (Container). Гасим рамку и заливку из
-          // глобальной inputDecorationTheme — иначе на фокусе всплывает
-          // оранжевая обводка со скруглением всех углов.
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          errorBorder: InputBorder.none,
-          focusedErrorBorder: InputBorder.none,
-          filled: false,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 20,
-          ),
-          prefixIcon: GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
-            child: const Icon(
-              Icons.chevron_left,
-              color: AppTheme.textPrimary,
-              size: 25,
-            ),
-          ),
-          prefixIconConstraints: const BoxConstraints(
-            minWidth: 44,
-            minHeight: 64,
-          ),
-        ),
-        onSubmitted: (_) => _executeSearch(),
-      ),
+    return ResultsSearchBar(
+      controller: _searchController,
+      onBack: () => Navigator.of(context).pop(),
+      onSubmit: _executeSearch,
     );
   }
 
@@ -1066,7 +1024,6 @@ class _CollapsingHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   // Figma colors
   static const Color _backgroundColor = AppTheme.backgroundWarm;
-  static const Color _greyText = AppTheme.textGrey;
 
   @override
   double get minExtent => collapsedHeight;
@@ -1255,53 +1212,10 @@ class _CollapsingHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   /// Build search bar (Figma design — back button inside input field)
   Widget _buildSearchBar() {
-    return Container(
-      height: 64,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F5F5),
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: TextField(
-        controller: searchController,
-        style: const TextStyle(
-          fontSize: 18,
-          color: AppTheme.textPrimary,
-        ),
-        decoration: InputDecoration(
-          hintText: 'С чего начнем?',
-          hintStyle: const TextStyle(
-            fontSize: 18,
-            color: _greyText,
-            fontWeight: FontWeight.w400,
-          ),
-          border: InputBorder.none,
-          // Поле само рисует свою форму (Container). Гасим рамку и заливку из
-          // глобальной inputDecorationTheme — иначе на фокусе всплывает
-          // оранжевая обводка со скруглением всех углов.
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          errorBorder: InputBorder.none,
-          focusedErrorBorder: InputBorder.none,
-          filled: false,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 20,
-          ),
-          prefixIcon: GestureDetector(
-            onTap: onBackTap,
-            child: const Icon(
-              Icons.chevron_left,
-              color: AppTheme.textPrimary,
-              size: 25,
-            ),
-          ),
-          prefixIconConstraints: const BoxConstraints(
-            minWidth: 44,
-            minHeight: 64,
-          ),
-        ),
-        onSubmitted: (_) => onSearchSubmitted(),
-      ),
+    return ResultsSearchBar(
+      controller: searchController,
+      onBack: onBackTap,
+      onSubmit: onSearchSubmitted,
     );
   }
 

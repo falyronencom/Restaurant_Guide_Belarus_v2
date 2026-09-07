@@ -133,8 +133,15 @@ class _SmartSearchBarState extends State<SmartSearchBar> {
                   vertical: 20,
                 ),
               ),
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _focusNode.unfocus(),
+              // Клавиша клавиатуры и оранжевая кнопка — одно действие.
+              // Раньше клавиша только прятала клавиатуру: пользователь нажимал
+              // «Найти» и не получал ничего. / The keyboard key and the button
+              // do the same thing; the key used to only dismiss the keyboard.
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) {
+                _focusNode.unfocus();
+                _handleSubmit();
+              },
               onChanged: (_) => setState(() {}),
             ),
           ),
