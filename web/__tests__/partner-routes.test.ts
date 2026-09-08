@@ -68,12 +68,14 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 beforeEach(() => jest.clearAllMocks());
 
 /*
- * Honesty-audit boundary (2026-09-07): the cases below cover the guard on
- * list / update / delete / media-temp / media-attach. `create`, `submit`,
- * `load` and `retry-ocr` have NO cross-origin case — removing assertSameOrigin
- * from create or submit keeps this whole file green (mutations M37/M38), while
- * the same removal on delete goes red (M39). Read the describe below as "five
- * of the nine handlers", not as the guard's coverage.
+ * Guard coverage is exhaustive by construction (2026-09-08, honesty-audit
+ * finding 4 closed): every partner Route Handler that exists has a cross-origin
+ * case below — list, update, delete, create, submit, load, retry-ocr,
+ * media-temp and media-attach, nine of nine. Each case is proved able to fail:
+ * replacing `assertSameOrigin(request)` with `null` in one route file turns
+ * exactly that route's case red and leaves the rest green. A tenth handler
+ * added without its own case here breaks that property silently — the describe
+ * would again cover less than its title claims.
  */
 
 describe('same-origin guard on the partner handlers', () => {
@@ -94,6 +96,31 @@ describe('same-origin guard on the partner handlers', () => {
     const res = await deletePost(makeRequest(CROSS), ctx('e9'));
     expect(res.status).toBe(403);
     expect(deleteEstablishmentAction).not.toHaveBeenCalled();
+  });
+
+  it('blocks a cross-origin create POST before the body is parsed', async () => {
+    const res = await createPost(makeRequest(CROSS, { name: 'X' }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ ok: false, code: 'CSRF' });
+    expect(createEstablishmentAction).not.toHaveBeenCalled();
+  });
+
+  it('blocks a cross-origin submit POST (moderation write — guard must hold)', async () => {
+    const res = await submitPost(makeRequest(CROSS), ctx('e9'));
+    expect(res.status).toBe(403);
+    expect(submitEstablishmentAction).not.toHaveBeenCalled();
+  });
+
+  it('blocks a cross-origin load POST (authed read — may rotate the cookie)', async () => {
+    const res = await loadPost(makeRequest(CROSS), ctx('e9'));
+    expect(res.status).toBe(403);
+    expect(loadEstablishmentForEdit).not.toHaveBeenCalled();
+  });
+
+  it('blocks a cross-origin retry-ocr POST', async () => {
+    const res = await retryPost(makeRequest(CROSS), ctx('e9'));
+    expect(res.status).toBe(403);
+    expect(retryOcrAction).not.toHaveBeenCalled();
   });
 
   it('blocks a cross-origin temp media upload with 403 (OSB-P4 parity)', async () => {

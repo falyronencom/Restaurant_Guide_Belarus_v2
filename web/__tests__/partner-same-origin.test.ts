@@ -38,17 +38,34 @@ describe('assertSameOrigin', () => {
   });
 
   it('rejects a cross-origin POST with 403 {ok:false,code:CSRF}', async () => {
-    // Honesty-audit boundary (2026-09-07): 'evil.example' shares no suffix with
-    // 'nirivio.by', so this fixture cannot tell `===` from `.endsWith()` —
-    // replacing the equality with a suffix match keeps all 481 tests green
-    // (mutation M57), and 'https://evilnirivio.by' would then pass as
-    // same-origin. The missing fixture is a suffix-shaped attacker origin.
+    // 'evil.example' shares no suffix with 'nirivio.by', so this fixture on its
+    // own cannot tell `===` from a suffix match. The fixtures that can are in
+    // the case below.
     const res = assertSameOrigin(
       reqWith({ origin: 'https://evil.example', host: 'nirivio.by' }),
     );
     expect(res).not.toBeNull();
     expect(res!.status).toBe(403);
     expect(await res!.json()).toEqual({ ok: false, code: 'CSRF' });
+  });
+
+  it('rejects a suffix-shaped attacker origin in either direction', () => {
+    // Honesty-audit finding 6 (closed 2026-09-08): the host comparison is exact,
+    // and a suffix match is wrong both ways round. `originHost.endsWith(
+    // expectedHost)` would admit an attacker who registers evilnirivio.by; the
+    // mirrored `expectedHost.endsWith(originHost)` would admit one who registers
+    // irivio.by. Neither is distinguishable from `===` by the evil.example
+    // fixture above, so both fixtures live here.
+    expect(
+      assertSameOrigin(
+        reqWith({ origin: 'https://evilnirivio.by', host: 'nirivio.by' }),
+      )?.status,
+    ).toBe(403);
+    expect(
+      assertSameOrigin(
+        reqWith({ origin: 'https://irivio.by', host: 'nirivio.by' }),
+      )?.status,
+    ).toBe(403);
   });
 
   it('rejects a request with no Origin header', () => {
