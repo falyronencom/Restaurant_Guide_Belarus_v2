@@ -24,12 +24,14 @@ function withMondayOpen(f: WizardFormState): WizardFormState {
 
 describe('meetsValidatorMinimum', () => {
   /*
-   * Honesty-audit boundary (2026-09-07): only ONE conjunct is ever falsified on
-   * its own here — observed hours. `hasCuisine` (mutation M59), `hasCategory`,
-   * `hasName`, `hasCity` and the `street || building` address rule (M34) are
-   * never the sole reason a fixture is false, so each can be dropped from
-   * validation.ts with this file green. Same shape in evaluateE1 below: only
-   * `photos` and `menu` are individually falsified — `hours` and
+   * Honesty-audit boundary (2026-09-07, narrowed 2026-09-08): the `street ||
+   * building` address rule (mutation M34) has left this list — the street-only
+   * case below falsifies it on its own, and `||` → `&&` in validation.ts turns
+   * that case red. The rest of the finding stands: apart from observed hours,
+   * no conjunct is ever the sole reason a fixture is false, so `hasCuisine`
+   * (mutation M59), `hasCategory`, `hasName` and `hasCity` can each still be
+   * dropped from validation.ts with this file green. Same shape in evaluateE1
+   * below: only `photos` and `menu` are individually falsified — `hours` and
    * `classification` are not (M62) — and the photo threshold is probed with 2
    * against 5, so 4 would pass as well (M60).
    */
@@ -48,6 +50,22 @@ describe('meetsValidatorMinimum', () => {
       cuisines: ['Народная'],
     });
     expect(f.latitude).toBeNull();
+    expect(meetsValidatorMinimum(f)).toBe(true);
+  });
+
+  it('accepts an address with a street and no building — the rule is street OR building', () => {
+    // M34 (`||` → `&&`) survived every fixture above: the true-case supplied
+    // BOTH parts, the false-cases failed on some other conjunct. A partner who
+    // typed only the street would silently stop getting a server draft.
+    const f = withMondayOpen({
+      ...emptyForm(),
+      name: 'Кафе «Весна»',
+      city: 'Минск',
+      street: 'проспект Независимости',
+      categories: ['Кафе'],
+      cuisines: ['Народная'],
+    });
+    expect(f.building).toBe('');
     expect(meetsValidatorMinimum(f)).toBe(true);
   });
 

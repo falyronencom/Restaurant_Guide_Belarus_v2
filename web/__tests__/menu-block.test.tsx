@@ -13,10 +13,16 @@
  *   3. Empty items + PDF (file_type='pdf', type='menu') → PDF fallback link.
  *   4. Empty items + no PDF → graceful empty-state «Меню пока не загружено.»
  *
- * Honesty-audit boundary (2026-09-07): the PRICE is asserted nowhere — neither
- * the rendered «12,50 BYN» row nor the JSON-LD offer. Rendering every fractional
- * price as «—» (mutation M52) and swapping priceCurrency BYN→USD (M53) both keep
- * all 481 tests green.
+ * Honesty-audit boundary (2026-09-07, closed 2026-09-08): the PRICE used to be
+ * asserted nowhere — neither the rendered row nor the JSON-LD offer — so
+ * rendering every fractional price as «—» (pilot mutation M52) and swapping
+ * priceCurrency BYN→USD (M53) both kept all 481 tests green. Case 1 now pins
+ * both formatPrice branches (12.5 → «12,50 BYN», 14 → «14 BYN») and the whole
+ * JSON-LD offer object, machine-readable dot included. What is still NOT pinned
+ * here: every case below passes `menuPhotos={[]}`, so the 4-up slice, the «+N»
+ * overlay count and the trigger aria-labels — MenuBlock's own arithmetic — have
+ * no assertion anywhere. lightbox.test.tsx drives the provider/trigger pair with
+ * its own fixtures and never sees the numbers MenuBlock hands them.
  */
 import { render, screen } from '@testing-library/react';
 
@@ -57,11 +63,27 @@ const jsonLdItemNames = (jsonLd: ReturnType<typeof JSON.parse>): string[] =>
       (s.hasMenuItem ?? []).map((mi) => mi.name),
   );
 
+// Same flattening one level shallower — the whole MenuItem objects, so a test
+// can reach the nested `offers` (price / priceCurrency) and not just the name.
+type JsonLdMenuItem = {
+  name: string;
+  offers?: { '@type': string; price: string; priceCurrency: string };
+};
+
+const jsonLdItems = (jsonLd: ReturnType<typeof JSON.parse>): JsonLdMenuItem[] =>
+  (jsonLd?.hasMenuSection ?? []).flatMap(
+    (s: { hasMenuItem?: JsonLdMenuItem[] }) => s.hasMenuItem ?? [],
+  );
+
 describe('MenuBlock — quality-tier presentation', () => {
   it("'clean' item: no 'уточнить' indicator and IS included in the Menu JSON-LD", () => {
     const { container } = render(
       <MenuBlock
-        menuItems={[item({ id: 'c1', item_name: 'Цезарь', quality_tier: 'clean' })]}
+        menuItems={[
+          item({ id: 'c1', item_name: 'Цезарь', quality_tier: 'clean' }),
+          // Whole price: the OTHER formatPrice branch, no trailing zeros.
+          item({ id: 'c2', item_name: 'Морс', price_byn: 14 }),
+        ]}
         menuPhotos={[]}
         pdfFallbacks={[]}
         establishmentName='Васильки'
@@ -73,11 +95,24 @@ describe('MenuBlock — quality-tier presentation', () => {
     // The item itself is still rendered.
     expect(screen.getByText('Цезарь')).toBeInTheDocument();
 
+    // The PRICE is half of what a menu row says. Both formatPrice branches:
+    // 12.5 → «12,50 BYN» (Russian decimal comma, two digits), 14 → «14 BYN».
+    expect(screen.getByText('12,50 BYN')).toBeInTheDocument();
+    expect(screen.getByText('14 BYN')).toBeInTheDocument();
+
     // Clean item IS propagated to structured data.
     const jsonLd = parseJsonLd(container);
     expect(jsonLd).not.toBeNull();
     expect(jsonLd['@type']).toBe('Menu');
     expect(jsonLdItemNames(jsonLd)).toContain('Цезарь');
+
+    // …and so is its offer. Schema.org wants the machine-readable form: a DOT
+    // decimal separator (unlike the rendered row) and an ISO 4217 currency —
+    // BYN, the only one this catalogue quotes. Compared as a whole object, so a
+    // dropped or renamed field cannot hide behind a passing sibling.
+    expect(jsonLdItems(jsonLd).find((i) => i.name === 'Цезарь')?.offers).toEqual(
+      { '@type': 'Offer', price: '12.50', priceCurrency: 'BYN' },
+    );
   });
 
   it("'needs_caution' item: shows 'уточнить' indicator and is EXCLUDED from the JSON-LD", () => {
