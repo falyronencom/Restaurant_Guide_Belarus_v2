@@ -176,30 +176,82 @@ void main() {
           reason: 'подгрузка выключена подстановкой, а не концом выдачи');
     });
 
-    test('ГРАНИЦА: пустая страница при живом счётчике не имеет пути назад',
-        () async {
-      // Грань 2 класса «состояние переживает данные». Гость ушёл со третьей
-      // страницы, выдача сократилась, он вернулся: сервер честно отдаёт
-      // пустую страницу при total > 0. Провайдер принимает пустой список и
-      // остаётся на третьей странице — экран говорит «ничего не найдено»
-      // при сорока пяти найденных, а вернуться на первую нечем:
-      // `hasMorePages` ложно, автоматического отката нет.
+    test('пустая страница при живом счётчике возвращает на последнюю', () async {
+      // Гость ушёл с третьей страницы, выдача сократилась, вернулся: сервер
+      // честно отдаёт пустой список при total > 0. Без возврата экран
+      // показал бы «ничего не найдено» при сорока пяти найденных, и уйти
+      // оттуда было бы нечем — `hasMorePages` ложно, кнопки «назад» нет.
       final p = providerWith(
         envelope: (page) => searchEnvelope(
-          establishments: page >= 3 ? const [] : [establishmentRow()],
+          establishments:
+              page >= 3 ? const [] : [establishmentRow(name: 'Стр $page')],
           page: page,
           total: 45,
-          totalPages: 1,
+          totalPages: 2,
         ),
       );
 
       await p.searchEstablishments(page: 3);
 
+      expect(p.currentPage, 2, reason: 'вернулись на последнюю существующую');
+      expect(p.establishments, isNotEmpty);
+    });
+
+    test('возврат делается ровно один раз, без бесконечного круга', () async {
+      // Если и пересчитанная страница пуста (счётчик устарел вместе с
+      // выдачей), повтор обязан остановиться, а не ходить по кругу.
+      var requests = 0;
+      installWireStand((options) {
+        requests++;
+        return jsonBody(searchEnvelope(
+          establishments: const [],
+          page: int.tryParse('${options.queryParameters['page']}') ?? 1,
+          total: 45,
+          totalPages: 2,
+        ));
+      });
+      final p = EstablishmentsProvider();
+      addTearDown(p.dispose);
+
+      await p.searchEstablishments(page: 3);
+
+      expect(requests, 2, reason: 'исходный запрос и ровно один возврат');
       expect(p.establishments, isEmpty);
-      expect(p.totalResults, 45);
-      expect(p.currentPage, 3);
-      expect(p.hasMorePages, isFalse,
-          reason: 'ни вперёд, ни назад — состояние без выхода');
+    });
+
+    test('честно пустая выдача возврата не вызывает', () async {
+      // Ноль найденных — это не «страница устарела», а «ничего не нашлось».
+      // Повтор здесь был бы лишним запросом на каждый пустой поиск.
+      var requests = 0;
+      installWireStand((_) {
+        requests++;
+        return jsonBody(searchEnvelope(
+            establishments: const [], page: 2, total: 0, totalPages: 0));
+      });
+      final p = EstablishmentsProvider();
+      addTearDown(p.dispose);
+
+      await p.searchEstablishments(page: 2);
+
+      expect(requests, 1);
+      expect(p.establishments, isEmpty);
+      expect(p.totalResults, 0);
+    });
+
+    test('пустая первая страница возврата не вызывает', () async {
+      // Возвращаться некуда: первая страница и есть последняя существующая.
+      var requests = 0;
+      installWireStand((_) {
+        requests++;
+        return jsonBody(searchEnvelope(
+            establishments: const [], page: 1, total: 45, totalPages: 3));
+      });
+      final p = EstablishmentsProvider();
+      addTearDown(p.dispose);
+
+      await p.searchEstablishments();
+
+      expect(requests, 1);
     });
   });
 

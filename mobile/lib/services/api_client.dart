@@ -142,7 +142,7 @@ class ApiClient {
             return handler.reject(
               DioException(
                 requestOptions: error.requestOptions,
-                error: 'Authentication failed. Please log in again.',
+                error: 'Сеанс истёк. Войдите заново.',
                 type: DioExceptionType.badResponse,
               ),
             );
@@ -270,6 +270,13 @@ class ApiClient {
     final options = Options(
       method: requestOptions.method,
       headers: requestOptions.headers,
+      // `extra` несёт счётчик повторов. Без него повторный запрос
+      // приходит в перехватчик с нулём, потолок не наступает никогда,
+      // и любая ошибка 5xx повторяется бесконечно: гость видит вечную
+      // загрузку — ни ошибки, ни пустого экрана, жаловаться не на что,
+      // а бэкенд получает запрос каждые полсекунды. Railway отдаёт 5xx
+      // на каждом деплое, так что случай не гипотетический.
+      extra: requestOptions.extra,
     );
 
     return _dio.request(
@@ -288,8 +295,7 @@ class ApiClient {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
-        userMessage =
-            'Connection timeout. Please check your internet connection.';
+        userMessage = 'Сервер не отвечает. Проверьте подключение.';
         break;
 
       case DioExceptionType.badResponse:
@@ -297,16 +303,16 @@ class ApiClient {
         break;
 
       case DioExceptionType.cancel:
-        userMessage = 'Request cancelled.';
+        userMessage = 'Запрос отменён.';
         break;
 
       case DioExceptionType.connectionError:
-        userMessage = 'No internet connection. Please check your network.';
+        userMessage = 'Нет связи. Проверьте подключение к интернету.';
         break;
 
       case DioExceptionType.unknown:
       default:
-        userMessage = 'An unexpected error occurred. Please try again.';
+        userMessage = 'Что-то пошло не так. Попробуйте ещё раз.';
     }
 
     return DioException(

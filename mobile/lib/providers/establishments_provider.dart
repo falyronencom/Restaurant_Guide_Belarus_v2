@@ -123,14 +123,26 @@ class EstablishmentsProvider with ChangeNotifier {
     AccountScope.register(resetAccountScope);
   }
 
-  /// Favorites belong to the signed-in account — cleared on logout / account
-  /// switch. Public catalog/search state deliberately survives (not
-  /// account-scoped).
+  /// Что принадлежит аккаунту, а что — каталогу.
+  ///
+  /// Избранное очевидно принадлежит вошедшему. Вместе с ним очищается ФРАЗА
+  /// поиска и её разбор: это ввод пользователя, а не состояние каталога.
+  /// Очистить превью на главной и оставить фразу здесь значило бы починить
+  /// симптом: экран результатов перечитывает `searchQuery` в `initState` и
+  /// ищет по ней заново — чужой запрос вернулся бы одним тапом позже.
+  ///
+  /// Город, фильтры, сортировка и сам список НЕ трогаются намеренно: это
+  /// публичный каталог, он одинаков для всех и к владельцу не привязан. /
+  /// Favorites and the typed phrase belong to the account; city, filters and
+  /// the catalog listing do not.
   void resetAccountScope() {
     _favoriteIds = {};
     _favoriteEstablishments = [];
     _isFavoritesLoading = false;
     _favoritesError = null;
+    _searchQuery = null;
+    _searchIntent = null;
+    _searchFallback = false;
     notifyListeners();
   }
 
@@ -279,9 +291,13 @@ class EstablishmentsProvider with ChangeNotifier {
   // ============================================================================
 
   /// Search establishments with current filters
+  /// [retriedAfterEmptyPage] — служебный флаг, не для экранов: он
+  /// предохраняет от бесконечного возврата, если и пересчитанная
+  /// последняя страница окажется пустой.
   Future<void> searchEstablishments({
     int page = 1,
     bool append = false,
+    bool retriedAfterEmptyPage = false,
   }) async {
     // Развилка движков считается ДО try: её же читает разбор ошибки в catch —
     // текст про лимит запросов честен только для умного пути.
@@ -373,6 +389,33 @@ class EstablishmentsProvider with ChangeNotifier {
       }
 
       _paginationMeta = result.meta;
+
+      // Страница, которой больше нет.
+      //
+      // Гость ушёл с третьей страницы, выдача сократилась, он вернулся:
+      // сервер честно отдаёт пустой список при total > 0, и это не ошибка
+      // сервера — нижнюю границу он чинит сам (`Math.max(page, 1)`), а про
+      // верхнюю знать не обязан. Без возврата экран показывал бы «ничего
+      // не найдено» при полусотне найденных, и уйти оттуда было бы нечем:
+      // `hasMorePages` ложно, кнопки «назад» у списка нет.
+      //
+      // Тот же случай закрыт в admin-web (очередь модерации, кадр 03).
+      // Флаг обязателен: если и пересчитанная страница придёт пустой,
+      // повтор ушёл бы в бесконечность.
+      if (!append &&
+          !retriedAfterEmptyPage &&
+          result.data.isEmpty &&
+          result.meta.total > 0 &&
+          page > 1) {
+        final lastExisting =
+            result.meta.totalPages > 0 ? result.meta.totalPages : 1;
+        await searchEstablishments(
+          page: lastExisting,
+          retriedAfterEmptyPage: true,
+        );
+        return;
+      }
+
       notifyListeners();
     } catch (e) {
       _error = _extractErrorMessage(e, smartPath: queryText.isNotEmpty);
@@ -679,7 +722,7 @@ class EstablishmentsProvider with ChangeNotifier {
       notifyListeners();
 
       // Show error but don't throw
-      _error = 'Failed to update favorites';
+      _error = 'Не удалось обновить избранное';
       notifyListeners();
     }
   }
@@ -745,18 +788,22 @@ class EstablishmentsProvider with ChangeNotifier {
 
   /// Extract user-friendly error message
   String _extractErrorMessage(Object error, {bool smartPath = false}) {
-    final errorStr = error.toString();
-
-    if (errorStr.contains('Network') || errorStr.contains('Connection')) {
-      return 'Network error. Please check your internet connection.';
+    // Разбор идёт по ТИПУ и СТАТУСУ, а не по тексту исключения.
+    // `ApiClient` пересобирает DioException без `message`, и в его
+    // `toString()` не попадает ни код статуса, ни слово «Connection» с
+    // заглавной — прежние проверки по подстроке не срабатывали ни разу,
+    // и почти всякая ошибка доходила до общего запасного текста.
+    if (error is! DioException) {
+      return 'Что-то пошло не так. Попробуйте ещё раз.';
     }
+    final status = error.response?.statusCode;
     // Код статуса берём у самого исключения, а не из его текста: `ApiClient`
     // пересобирает DioException без `message`, и в `toString()` попадают лишь
     // тип и подставленный текст — числа 429 там нет вовсе. Проверки по строке
     // ниже оставлены для ошибок, прилетающих не от Dio. / The status code is
     // read from the exception, not from its text: the rebuilt DioException
     // prints no status code at all.
-    if (error is DioException && error.response?.statusCode == 429) {
+    if (status == 429) {
       // Умный поиск ограничен 30 запросами в минуту на IP: за ним стоит вызов
       // внешней модели. Общий текст «попробуйте позже» здесь врёт — ждать надо
       // именно минуту, и повтор сразу упрётся в тот же лимит. На остальных
@@ -766,13 +813,29 @@ class EstablishmentsProvider with ChangeNotifier {
           ? 'Слишком много запросов, подождите минуту'
           : 'Слишком много запросов. Попробуйте позже.';
     }
-    if (errorStr.contains('404')) {
-      return 'Establishment not found.';
+    if (status == 404) {
+      return 'Заведение не найдено.';
     }
-    if (errorStr.contains('500')) {
-      return 'Server error. Please try again later.';
+    if (status != null && status >= 500) {
+      return 'Ошибка сервера. Попробуйте позже.';
+    }
+    switch (error.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.connectionError:
+        return 'Нет связи. Проверьте подключение к интернету.';
+      default:
+        break;
     }
 
-    return 'An error occurred. Please try again.';
+    // Текст, подготовленный транспортом: там уже лежит либо сообщение
+    // бэкенда, либо русская формулировка `_enhanceError`.
+    final prepared = error.error;
+    if (prepared is String && prepared.isNotEmpty) {
+      return prepared;
+    }
+
+    return 'Что-то пошло не так. Попробуйте ещё раз.';
   }
 }
