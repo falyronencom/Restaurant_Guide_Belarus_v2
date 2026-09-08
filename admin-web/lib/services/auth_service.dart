@@ -105,7 +105,16 @@ class AuthService {
       if (response.statusCode == 200 &&
           response.data is Map<String, dynamic>) {
         final data = response.data as Map<String, dynamic>;
-        final userData = data['data'] as Map<String, dynamic>? ??
+        // Конверт бэкенда — `{ success, data: { user: {...} } }` (закреплён
+        // backend/src/tests/e2e/auth-journey.test.js: `body.data.user.id`).
+        // До 09.09.2026 здесь брали `data` целиком: `User.fromJson` получал
+        // `{user: ...}`, отдавал пользователя без id и с ролью `user` по
+        // умолчанию, провайдер считал сессию чужой и стирал её на КАЖДОМ
+        // старте — панель на хостинге не переживала перезагрузку страницы.
+        // Порядок веток — как в mobile (`auth_service.dart`), который этот
+        // же ответ читает верно.
+        final userData = data['data']?['user'] as Map<String, dynamic>? ??
+            data['data'] as Map<String, dynamic>? ??
             data['user'] as Map<String, dynamic>? ??
             data;
         return User.fromJson(userData);

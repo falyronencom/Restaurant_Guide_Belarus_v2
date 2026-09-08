@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -9,6 +11,15 @@ import 'package:restaurant_guide_admin_web/services/session_events.dart';
 class ApiClient {
   final Dio _dio;
   final FlutterSecureStorage _storage;
+
+  /// Замок обновления токена: параллельные 401 делят ОДНО обновление.
+  ///
+  /// Refresh-токен на бэкенде одноразовый: второе обновление тем же токеном
+  /// сервер считает повторным использованием и отзывает все токены
+  /// пользователя. Без замка четыре запроса дашборда, получив 401 разом
+  /// после четырёх часов простоя, запускали бы четыре обновления — первое
+  /// проходило, остальные три выжигали сессию. Образец — mobile.
+  Completer<bool>? _refreshCompleter;
 
   // Singleton pattern
   static final ApiClient _instance = ApiClient.withDio(_defaultDio());
@@ -118,6 +129,11 @@ class ApiClient {
   static bool _isCredentialRequest(RequestOptions options) =>
       _credentialPaths.any((path) => options.uri.path.endsWith(path));
 
+  /// Метка запроса, уже повторённого после обновления токена. Его 401 —
+  /// ответ по существу (право отозвано, роль изменилась), а не истёкшая
+  /// сессия: второе обновление и второй повтор дали бы цикл без дна.
+  static const String _retriedAfterRefresh = 'retriedAfterRefresh';
+
   Interceptor _createErrorInterceptor() {
     return InterceptorsWrapper(
       onError: (error, handler) async {
@@ -131,23 +147,26 @@ class ApiClient {
         // обновление возвращался сюда же и запускал обновление заново, пока
         // сервер не отвечал 429: просроченный refresh-токен превращался в
         // шторм запросов. Ответ сервера таким запросам отдаётся как есть.
+        // И кроме уже повторённого запроса (см. [_retriedAfterRefresh]).
         if (error.response?.statusCode == 401 &&
-            !_isCredentialRequest(error.requestOptions)) {
+            !_isCredentialRequest(error.requestOptions) &&
+            error.requestOptions.extra[_retriedAfterRefresh] != true) {
           final refreshed = await _attemptTokenRefresh();
           if (refreshed) {
+            error.requestOptions.extra[_retriedAfterRefresh] = true;
             try {
               final response = await _retry(error.requestOptions);
               return handler.resolve(response);
-            } catch (e) {
+            } on DioException catch (e) {
+              // Отказ повтора — настоящий ответ сервера на свежий токен;
+              // отдаём его, а не исходный 401 без текста.
+              return handler.reject(e);
+            } catch (_) {
               return handler.reject(error);
             }
           } else {
-            await clearTokens();
-            // Хранилище пусто, обновить сессию больше нечем — об этом обязан
-            // узнать провайдер авторизации, иначе он останется «вошедшим»
-            // с пустым хранилищем (OSB-M I5). Слушатель сам отличает
-            // истёкшую сессию от неудачного входа по своему состоянию.
-            SessionEvents.reportExpired();
+            // Хранилище уже очищено владельцем замка, провайдер уведомлён
+            // (OSB-M I5) — здесь только отказ запросу.
             return handler.reject(
               DioException(
                 requestOptions: error.requestOptions,
@@ -187,7 +206,41 @@ class ApiClient {
   // Token Management
   // ============================================================================
 
-  Future<bool> _attemptTokenRefresh() async {
+  /// Обновить токен один раз на всех, кто получил 401 одновременно.
+  ///
+  /// Владелец замка выполняет обновление и, если оно провалилось, сам
+  /// чистит хранилище и сообщает провайдеру об истёкшей сессии — ровно один
+  /// раз на цикл. Ожидающие получают только результат. Запрос обновления
+  /// идёт через тот же `Dio`, но его собственный 401 сюда не возвращается:
+  /// путь исключён в [_isCredentialRequest], иначе замок ждал бы сам себя.
+  Future<bool> _attemptTokenRefresh() {
+    final inFlight = _refreshCompleter;
+    if (inFlight != null) return inFlight.future;
+
+    final completer = Completer<bool>();
+    _refreshCompleter = completer;
+    () async {
+      var refreshed = false;
+      try {
+        refreshed = await _doTokenRefresh();
+      } catch (_) {
+        refreshed = false;
+      }
+      if (!refreshed) {
+        await clearTokens();
+        // Хранилище пусто, обновить сессию больше нечем — об этом обязан
+        // узнать провайдер авторизации, иначе он останется «вошедшим»
+        // с пустым хранилищем (OSB-M I5). Слушатель сам отличает
+        // истёкшую сессию от неудачного входа по своему состоянию.
+        SessionEvents.reportExpired();
+      }
+      _refreshCompleter = null;
+      completer.complete(refreshed);
+    }();
+    return completer.future;
+  }
+
+  Future<bool> _doTokenRefresh() async {
     try {
       final refreshToken = await _storage.read(key: 'refresh_token');
       if (refreshToken == null || refreshToken.isEmpty) {
@@ -243,9 +296,14 @@ class ApiClient {
   // ============================================================================
 
   Future<Response> _retry(RequestOptions requestOptions) async {
+    // `extra` обязан переехать в повтор: в нём метка [_retriedAfterRefresh]
+    // и счётчик `retryCount` для 5xx. До 09.09.2026 повтор собирался без
+    // него — метка терялась, а счётчик каждый раз начинался с нуля, и
+    // упорно падающий эндпоинт повторялся бы без предела.
     final options = Options(
       method: requestOptions.method,
       headers: requestOptions.headers,
+      extra: requestOptions.extra,
     );
     return _dio.request(
       requestOptions.path,
