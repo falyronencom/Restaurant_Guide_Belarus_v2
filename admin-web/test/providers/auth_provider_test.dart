@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:restaurant_guide_admin_web/models/auth_response.dart';
 import 'package:restaurant_guide_admin_web/models/user.dart';
@@ -17,6 +18,7 @@ class _FakeAuthService implements AuthService {
   bool storedSession = false;
   User? storedUser;
   User? nextLoginUser;
+  Object? loginError;
   int logoutCalls = 0;
   int clearCalls = 0;
 
@@ -30,12 +32,14 @@ class _FakeAuthService implements AuthService {
   Future<AuthResponse> login({
     required String email,
     required String password,
-  }) async =>
-      AuthResponse(
-        accessToken: 'access',
-        refreshToken: 'refresh',
-        user: nextLoginUser!,
-      );
+  }) async {
+    if (loginError != null) throw loginError!;
+    return AuthResponse(
+      accessToken: 'access',
+      refreshToken: 'refresh',
+      user: nextLoginUser!,
+    );
+  }
 
   @override
   Future<void> logout() async {
@@ -200,6 +204,43 @@ void main() {
 
       expect(auth.isAuthenticated, isFalse);
       expect(service.clearCalls, 1);
+    });
+  });
+
+  group('Текст отказа во входе', () {
+    // Провайдер узнаёт причину по фразе сервера внутри ошибки транспорта.
+    // Перехватчик обязан пропустить её как есть: подменённая на «Please log
+    // in again» она даёт общую «Ошибку входа» — так и было до правки
+    // перехватчика (test/services/api_client_credentials_401_test.dart).
+    test('«Invalid email/phone or password» → «Неверный email или пароль»',
+        () async {
+      final auth = await provider();
+      service.loginError = DioException(
+        requestOptions: RequestOptions(path: '/api/v1/admin/auth/login'),
+        type: DioExceptionType.badResponse,
+        error: 'Invalid email/phone or password',
+      );
+
+      final ok = await auth.login(email: 'admin@nirivio.by', password: 'typo');
+
+      expect(ok, isFalse);
+      expect(auth.isAuthenticated, isFalse);
+      expect(auth.errorMessage, 'Неверный email или пароль');
+    });
+
+    test('подменённый текст про повторный вход даёт общую ошибку', () async {
+      final auth = await provider();
+      service.loginError = DioException(
+        requestOptions: RequestOptions(path: '/api/v1/admin/auth/login'),
+        type: DioExceptionType.badResponse,
+        error: 'Authentication failed. Please log in again.',
+      );
+
+      await auth.login(email: 'admin@nirivio.by', password: 'typo');
+
+      // Закрепляет, ПОЧЕМУ перехватчик не должен подменять ответ входа:
+      // из этой фразы провайдеру причину не восстановить.
+      expect(auth.errorMessage, 'Ошибка входа. Попробуйте снова.');
     });
   });
 }

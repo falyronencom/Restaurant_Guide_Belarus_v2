@@ -107,11 +107,32 @@ class ApiClient {
   // Error Interceptor - Handles 401 refresh and 5xx retry
   // ============================================================================
 
+  /// Пути, чей 401 — отказ в учётных данных, а не истёкшая сессия: сам вход
+  /// (панельный и общий) и само обновление токена.
+  static const List<String> _credentialPaths = <String>[
+    '/api/v1/admin/auth/login',
+    '/api/v1/auth/login',
+    '/api/v1/auth/refresh',
+  ];
+
+  static bool _isCredentialRequest(RequestOptions options) =>
+      _credentialPaths.any((path) => options.uri.path.endsWith(path));
+
   Interceptor _createErrorInterceptor() {
     return InterceptorsWrapper(
       onError: (error, handler) async {
-        // Handle 401 Unauthorized - try to refresh token
-        if (error.response?.statusCode == 401) {
+        // Handle 401 Unauthorized - try to refresh token.
+        //
+        // Кроме запросов за учётными данными: 401 на сам вход означает
+        // «пароль не принят», а не «сессия истекла», и обновлять по нему
+        // токен нечем и незачем. Раньше такой 401 уходил в эту же ветку и
+        // подменялся текстом про повторный вход — опечатавшийся видел общую
+        // «Ошибку входа» вместо «Неверный email или пароль». А 401 на само
+        // обновление возвращался сюда же и запускал обновление заново, пока
+        // сервер не отвечал 429: просроченный refresh-токен превращался в
+        // шторм запросов. Ответ сервера таким запросам отдаётся как есть.
+        if (error.response?.statusCode == 401 &&
+            !_isCredentialRequest(error.requestOptions)) {
           final refreshed = await _attemptTokenRefresh();
           if (refreshed) {
             try {
