@@ -1,0 +1,29 @@
+{
+	# TLS заканчивается на edge Railway; за ним Caddy отдаёт обычный HTTP.
+	auto_https off
+	admin off
+}
+
+:{$PORT:8080} {
+	root * /srv
+	encode gzip zstd
+
+	# Flutter ходит hash-адресами (/#/login), но ссылка с путём тоже обязана
+	# попасть в оболочку, а не в 404.
+	try_files {path} /index.html
+	file_server
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+		# У бандла Flutter нет хэшей в именах: main.dart.js, манифесты в
+		# assets/, шрифты, иконки и CanvasKit переживают редеплой под теми же
+		# адресами. Любой долгий кэш пары «свежая оболочка + старый ассет»
+		# показывал бы прежнюю сборку или ломал её. Поэтому всё — no-cache:
+		# браузер хранит копию, но сверяет её по ETag/Last-Modified (304 —
+		# дёшево), и после редеплоя новый файл приходит с первого захода.
+		Cache-Control "no-cache"
+	}
+}

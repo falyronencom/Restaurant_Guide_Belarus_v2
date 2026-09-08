@@ -1,0 +1,12 @@
+# В образ сборки едут только исходники: локальные артефакты сборки и
+# тесты не нужны, а build/ на машине разработчика весит десятки мегабайт.
+build/
+.dart_tool/
+.idea/
+__pycache__/
+session_reports/
+test/
+*.iml
+.flutter-plugins-dependencies
+Dockerfile
+.dockerignore

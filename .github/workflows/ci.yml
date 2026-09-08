@@ -239,3 +239,11 @@ jobs:
       - name: test
         working-directory: ${{ matrix.project }}
         run: flutter test
+
+      - name: build web (только admin-web)
+        # Бандл админки на Railway собирает admin-web/Dockerfile той же
+        # командой, но красную сборку Railway гейт не видит. Здесь она
+        # падает до деплоя — на том же Flutter 3.35.2. У mobile web-бандла нет.
+        if: matrix.project == 'admin-web'
+        working-directory: admin-web
+        run: flutter build web --release --dart-define=ENV=production --pwa-strategy=none
