@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_mobile/models/establishment.dart';
 import 'package:restaurant_guide_mobile/models/filter_options.dart';
+import 'package:restaurant_guide_mobile/services/account_scope.dart';
 import 'package:restaurant_guide_mobile/services/smart_search_service.dart';
 
 /// Smart search states
@@ -10,6 +11,29 @@ enum SmartSearchState { idle, loading, results, error }
 /// Separate from EstablishmentsProvider — parallel search path.
 class SmartSearchProvider extends ChangeNotifier {
   final SmartSearchService _service = SmartSearchService();
+
+  SmartSearchProvider() {
+    AccountScope.register(resetAccountScope);
+  }
+
+  /// Фраза принадлежит тому, кто её набрал.
+  ///
+  /// Провайдер живёт в `main.dart` и переживает выход из аккаунта, а превью
+  /// рисуется на ПЕРВОМ экране после входа — следующий вошедший видел бы блок
+  /// выдачи под чужим запросом, ничего не набирая. Это устаревшее состояние, а
+  /// не утечка ПДн (сама выдача — публичный каталог), но показывать человеку
+  /// чужой запрос на старте всё равно нельзя. / The phrase belongs to whoever
+  /// typed it; the preview renders on the first screen after login.
+  void resetAccountScope() {
+    _state = SmartSearchState.idle;
+    _smartResults = [];
+    _totalResults = 0;
+    _parsedIntent = null;
+    _isFallback = false;
+    _errorMessage = null;
+    _lastQuery = '';
+    notifyListeners();
+  }
 
   SmartSearchState _state = SmartSearchState.idle;
   List<Establishment> _smartResults = [];

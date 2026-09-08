@@ -9,6 +9,7 @@ import 'package:restaurant_guide_mobile/providers/notification_provider.dart';
 import 'package:restaurant_guide_mobile/providers/partner_dashboard_provider.dart';
 import 'package:restaurant_guide_mobile/providers/partner_menu_provider.dart';
 import 'package:restaurant_guide_mobile/providers/promotion_provider.dart';
+import 'package:restaurant_guide_mobile/providers/smart_search_provider.dart';
 import 'package:restaurant_guide_mobile/services/account_scope.dart';
 
 /// Сторож реестра сбросов при смене аккаунта.
@@ -42,6 +43,7 @@ void main() {
     'BookingSettingsProvider', // настройки брони
     'BookingProvider', // брони с именами и телефонами гостей
     'NotificationPreferencesProvider', // переключатели пушей
+    'SmartSearchProvider', // фраза, её разбор и превью на главной
   };
 
   /// Провайдеры уровня приложения, которые сброс НЕ регистрируют, и почему.
@@ -53,15 +55,6 @@ void main() {
     'AuthProvider':
         'сам вызывает resetAll при выходе и смене userId — он источник '
             'события, а не его подписчик',
-    'SmartSearchProvider':
-        'ИЗВЕСТНЫЙ РАЗРЫВ, решение не принято. Держит последнюю фразу '
-            'пользователя, разобранный интент и выдачу; всё это переживает '
-            'выход из аккаунта, и следующий вошедший видит на главной превью '
-            'по чужому запросу. Это устаревшее состояние, а не утечка ПДн '
-            '(сама выдача — публичный каталог), поэтому в один ряд с бронями '
-            'не ставится. Файл принадлежит треку умного поиска — правка '
-            'должна прийти оттуда. Появится register — эта строка обязана '
-            'быть снята, и тест об этом напомнит',
   };
 
   group('Состав реестра против состава приложения', () {
@@ -141,6 +134,7 @@ void main() {
         'BookingProvider': () => BookingProvider(),
         'NotificationPreferencesProvider': () =>
             NotificationPreferencesProvider(),
+        'SmartSearchProvider': () => SmartSearchProvider(),
       };
 
       expect(builders.keys.toSet(), mustRegister,

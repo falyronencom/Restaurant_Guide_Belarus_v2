@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:restaurant_guide_mobile/models/filter_options.dart';
 import 'package:restaurant_guide_mobile/providers/establishments_provider.dart';
 import 'package:restaurant_guide_mobile/providers/smart_search_provider.dart';
+import 'package:restaurant_guide_mobile/services/account_scope.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/wire_fixtures.dart';
@@ -434,6 +435,79 @@ void main() {
           .executeSmartSearch('кофе', filters: est.screenFilters);
 
       expect(bodyOf(adapter.requests.last)['sort_by'], 'price_asc');
+    });
+  });
+
+  group('Смена аккаунта не оставляет чужую фразу', () {
+    // Провайдеры живут в `main.dart` и переживают выход из аккаунта. Фраза —
+    // ввод пользователя: следующий вошедший не должен видеть её ни на главной
+    // (превью рисуется на ПЕРВОМ экране после входа), ни на экране
+    // результатов, который перечитывает `searchQuery` в `initState`.
+    setUp(AccountScope.debugReset);
+    tearDown(AccountScope.debugReset);
+
+    test('превью главной очищается вместе с разобранной фразой', () async {
+      installWireStand((_) => jsonBody(smartSearchEnvelope(
+            intent: smartIntent(dish: 'пицца'),
+          )));
+
+      final smart = SmartSearchProvider();
+      addTearDown(smart.dispose);
+      await smart.executeSmartSearch('пицца за 20 рублей');
+
+      expect(smart.smartResults, isNotEmpty,
+          reason: 'без выдачи проверка сброса ничего не докажет');
+      expect(smart.lastQuery, 'пицца за 20 рублей');
+
+      AccountScope.resetAll();
+
+      expect(smart.smartResults, isEmpty);
+      expect(smart.lastQuery, '');
+      expect(smart.parsedIntent, isNull);
+      expect(smart.totalResults, 0);
+      expect(smart.state, SmartSearchState.idle);
+    });
+
+    test('фраза и её разбор уходят и из списка — иначе они вернутся одним тапом',
+        () async {
+      // Экран результатов в `initState` читает `searchQuery` и ищет по ней
+      // заново. Очистить только превью значило бы починить симптом.
+      installWireStand((_) => jsonBody(smartSearchEnvelope(
+            intent: smartIntent(dish: 'пицца'),
+          )));
+
+      final est = EstablishmentsProvider();
+      addTearDown(est.dispose);
+      est.setSearchQuery('пицца за 20 рублей');
+      await est.searchEstablishments();
+
+      expect(est.searchQuery, 'пицца за 20 рублей');
+      expect(est.searchIntent?.dish, 'пицца');
+
+      AccountScope.resetAll();
+
+      expect(est.searchQuery, isNull);
+      expect(est.searchIntent, isNull);
+      expect(est.searchFallback, isFalse);
+    });
+
+    test('город и фильтры каталога сброс переживают — они не принадлежат никому',
+        () async {
+      // Обратная сторона: вычистить заодно каталог значило бы сбрасывать
+      // пользователю выбор города при каждом выходе из аккаунта.
+      installWireStand((_) => jsonBody(searchEnvelope()));
+
+      final est = EstablishmentsProvider();
+      addTearDown(est.dispose);
+      est.setCity('Минск');
+      est.setPriceFilters({PriceRange.medium});
+      est.setHoursFilter(HoursFilter.until22);
+
+      AccountScope.resetAll();
+
+      expect(est.selectedCity, 'Минск');
+      expect(est.priceFilters, {PriceRange.medium});
+      expect(est.hoursFilter, HoursFilter.until22);
     });
   });
 }
