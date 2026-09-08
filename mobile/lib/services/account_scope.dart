@@ -24,4 +24,13 @@ class AccountScope {
   /// Test isolation only — forget everything registered so far.
   @visibleForTesting
   static void debugReset() => _resets.clear();
+
+  /// Сколько сбросов зарегистрировано — для сквозного сторожа.
+  ///
+  /// Реестр молчалив по устройству: провайдер, забывший про
+  /// [register], не меняет ни строчки вывода прогона, а после смены
+  /// аккаунта показывает данные прежнего. Сторож обязан уметь
+  /// пересчитать подписчиков, иначе он проверяет только сам себя.
+  @visibleForTesting
+  static int get debugRegisteredCount => _resets.length;
 }

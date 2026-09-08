@@ -227,6 +227,51 @@ Map<String, dynamic> reviewsEnvelope({
       },
     };
 
+/// Строка избранного — НЕ карточка заведения.
+///
+/// `/api/v1/favorites` отдаёт плоскую запись с префиксом `establishment_`,
+/// и сервис сам пересобирает её в форму карточки. Снимок повторяет именно
+/// эту форму: подставь сюда обычную строку заведения — и список выйдет
+/// пустым, а тест зелёным, потому что разбор молча не найдёт своих ключей.
+Map<String, dynamic> favoriteRow({
+  String id = '11111111-1111-4111-8111-111111111111',
+  String name = 'Васильки',
+}) =>
+    <String, dynamic>{
+      'establishment_id': id,
+      'establishment_name': name,
+      'establishment_description': 'Белорусская кухня в центре',
+      'establishment_city': 'Минск',
+      'establishment_address': 'пр. Независимости, 43',
+      'establishment_latitude': 53.9023,
+      'establishment_longitude': 27.5619,
+      'establishment_categories': <String>['Ресторан'],
+      'establishment_cuisines': <String>['Народная'],
+      'establishment_price_range': r'$$',
+      'establishment_average_rating': 4.5,
+      'establishment_status': 'active',
+      'establishment_working_hours': null,
+      'establishment_primary_image': 'https://cdn.example/vasilki',
+      'created_at': '2026-04-01T09:00:00.000Z',
+    };
+
+/// Конверт `/api/v1/favorites`: `{ data: { favorites, pagination } }`.
+Map<String, dynamic> favoritesEnvelope({
+  List<Map<String, dynamic>>? favorites,
+}) =>
+    <String, dynamic>{
+      'success': true,
+      'data': <String, dynamic>{
+        'favorites': favorites ?? [favoriteRow()],
+        'pagination': <String, dynamic>{
+          'page': 1,
+          'limit': 20,
+          'total': (favorites ?? [favoriteRow()]).length,
+          'totalPages': 1,
+        },
+      },
+    };
+
 /// Копия карты без указанного ключа — «поле пропало из проекции».
 Map<String, dynamic> without(Map<String, dynamic> row, String key) {
   final copy = Map<String, dynamic>.from(row);
