@@ -65,6 +65,7 @@ jest.unstable_mockModule('../../models/auditLogModel.js', () => ({
   createAuditLog: jest.fn(),
   getRejectionHistory: jest.fn(),
   countRejections: jest.fn(),
+  getLatestEntityAction: jest.fn(),
 }));
 
 jest.unstable_mockModule('../../services/notificationService.js', () => ({

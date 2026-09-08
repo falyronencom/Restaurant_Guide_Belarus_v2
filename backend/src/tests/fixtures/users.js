@@ -58,6 +58,17 @@ export const testUsers = {
     authMethod: 'email'
   },
 
+  // Viewer - read-only admin panel role (migration 034): enters the panel,
+  // reads everything, changes nothing
+  viewer: {
+    email: 'viewer@test.com',
+    phone: '+375441234568',
+    password: 'Viewer123!@#',
+    name: 'Ольга Наблюдателева',
+    role: 'viewer',
+    authMethod: 'email'
+  },
+
   // Phone-only user (no email)
   phoneOnlyUser: {
     email: null,

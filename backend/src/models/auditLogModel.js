@@ -94,6 +94,51 @@ export const createAuditLog = async (data) => {
 };
 
 /**
+ * Latest audit entry of one action on one entity, with the actor's name.
+ *
+ * Used for "who suspended this establishment": moderation_notes carries the
+ * reason and the time but no author, and the audit log is the only carrier
+ * of authorship. Reading it back keeps a single source of truth.
+ *
+ * @param {Object} params
+ * @param {string} params.entityType - e.g. 'establishment'
+ * @param {string} params.entityId - UUID of the entity
+ * @param {string} params.action - e.g. 'suspend'
+ * @returns {Promise<Object|null>} { user_id, admin_name, admin_email, created_at } or null
+ */
+export const getLatestEntityAction = async ({ entityType, entityId, action }) => {
+  const query = `
+    SELECT
+      al.user_id,
+      u.name AS admin_name,
+      u.email AS admin_email,
+      -- AT TIME ZONE 'UTC': the column is timestamp WITHOUT time zone and
+      -- node-pg would otherwise read it in the process's local zone.
+      al.created_at AT TIME ZONE 'UTC' AS created_at
+    FROM audit_log al
+    LEFT JOIN users u ON al.user_id = u.id
+    WHERE al.entity_type = $1
+      AND al.entity_id = $2
+      AND al.action = $3
+    ORDER BY al.created_at DESC, al.id DESC
+    LIMIT 1
+  `;
+
+  try {
+    const result = await pool.query(query, [entityType, entityId, action]);
+    return result.rows[0] || null;
+  } catch (error) {
+    logger.error('Error fetching latest entity action from audit log', {
+      error: error.message,
+      entityType,
+      entityId,
+      action,
+    });
+    throw error;
+  }
+};
+
+/**
  * Get rejection history from audit log
  * Joins with establishments to show current state
  *

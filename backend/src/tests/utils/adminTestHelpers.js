@@ -29,6 +29,15 @@ export const ADMIN_CREDENTIALS = {
   password: testUsers.admin.password,
 };
 
+/**
+ * Known viewer credentials — the read-only panel role (migration 034).
+ * Mirrors testUsers.viewer from fixtures/users.js.
+ */
+export const VIEWER_CREDENTIALS = {
+  email: testUsers.viewer.email,
+  password: testUsers.viewer.password,
+};
+
 // ============================================================================
 // User creation helpers
 // ============================================================================
@@ -41,6 +50,16 @@ export const ADMIN_CREDENTIALS = {
  */
 export async function createAdminAndGetToken() {
   return createUserAndGetTokens(testUsers.admin);
+}
+
+/**
+ * Create a viewer (read-only panel role) and return { user, accessToken, refreshToken }.
+ * Reuses testUsers.viewer fixture from fixtures/users.js.
+ *
+ * @returns {Promise<{ user: Object, accessToken: string, refreshToken: string }>}
+ */
+export async function createViewerAndGetToken() {
+  return createUserAndGetTokens(testUsers.viewer);
 }
 
 // ============================================================================

@@ -81,10 +81,11 @@ jobs:
 
       - name: Развернуть схему тестовой БД
         # production_schema.sql — авторитетный снапшот миграций 001–029,
-        # затем поверх 031, 032 и 033. 031 и 032 — ровно то, что применено на
-        # проде; 033 (menu_push_enabled) применяется на Railway вручную после
-        # мержа, и до этого снапшот её не несёт — здесь она нужна, чтобы
-        # тестовая БД совпадала с кодом (notification-preferences.test.js).
+        # затем поверх 031, 032, 033 и 034. 031 и 032 — ровно то, что применено
+        # на проде; 033 (menu_push_enabled) и 034 (роль viewer) применяются на
+        # Railway вручную после мержа, и до этого снапшот их не несёт — здесь
+        # они нужны, чтобы тестовая БД совпадала с кодом
+        # (notification-preferences.test.js; admin-auth / admin-authorization).
         # 030 НЕ применяется намеренно: он dormant до real-500 (ROADMAP),
         # а canon-check.integration.test.js создаёт собственную scratch-БД и
         # накатывает его туда сам.
@@ -95,6 +96,7 @@ jobs:
           psql -h localhost -U postgres -d restaurant_guide_test -v ON_ERROR_STOP=1 -q -f backend/migrations/031_seed_import_registry.sql
           psql -h localhost -U postgres -d restaurant_guide_test -v ON_ERROR_STOP=1 -q -f backend/migrations/032_password_reset_tokens.sql
           psql -h localhost -U postgres -d restaurant_guide_test -v ON_ERROR_STOP=1 -q -f backend/migrations/033_menu_push_preference.sql
+          psql -h localhost -U postgres -d restaurant_guide_test -v ON_ERROR_STOP=1 -q -f backend/migrations/034_viewer_role.sql
 
       - name: Создать backend/.env.test
         # Файл гитигнорен, а setup-env.js и globalSetup.js читают его по пути.

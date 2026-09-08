@@ -5,11 +5,13 @@
  * Currently provides admin login with role verification.
  *
  * The admin login reuses the existing auth infrastructure (verifyCredentials,
- * generateTokenPair) but adds a role gate — only users with role 'admin'
- * are allowed to authenticate through this endpoint.
+ * generateTokenPair) but adds a role gate — only the panel roles listed in
+ * config/panelRoles.js (admin acts, viewer reads) are allowed to authenticate
+ * through this endpoint.
  */
 
 import * as authService from '../services/authService.js';
+import { isPanelRole } from '../config/panelRoles.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -17,8 +19,9 @@ import logger from '../utils/logger.js';
  *
  * POST /api/v1/admin/auth/login
  *
- * Authenticates an admin user. Reuses the standard credential verification
- * and token generation, but rejects non-admin users even with valid credentials.
+ * Authenticates a panel user (admin or viewer). Reuses the standard credential
+ * verification and token generation, but rejects every other role even with
+ * valid credentials.
  *
  * Request body:
  * - email (optional if phone provided): Admin's email address
@@ -28,7 +31,7 @@ import logger from '../utils/logger.js';
  * Response:
  * - 200 OK: Login successful with tokens
  * - 401 Unauthorized: Invalid credentials
- * - 403 Forbidden: Valid credentials but user is not an admin
+ * - 403 Forbidden: Valid credentials but the role is outside the panel
  */
 export async function adminLogin(req, res, next) {
   try {
@@ -73,9 +76,11 @@ export async function adminLogin(req, res, next) {
       });
     }
 
-    // Role gate: reject non-admin users
-    if (user.role !== 'admin') {
-      logger.warn('Non-admin login attempt to admin endpoint', {
+    // Role gate: only panel roles enter (admin acts, viewer reads). The
+    // error code stays ADMIN_ACCESS_REQUIRED — admin-web maps it to its
+    // Russian message, and the door is still the admin panel's.
+    if (!isPanelRole(user.role)) {
+      logger.warn('Login attempt to admin endpoint by a role outside the panel', {
         userId: user.id,
         role: user.role,
         email: user.email,

@@ -19,6 +19,7 @@
 
 import * as adminService from '../services/adminService.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
+import { isViewer } from '../config/panelRoles.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -52,12 +53,15 @@ export const listPendingEstablishments = asyncHandler(async (req, res) => {
  *
  * Returns complete establishment data for moderation review.
  * Organized for four-tab display: Данные, О заведении, Медиа, Адрес.
+ * A viewer gets the same card with partner contacts redacted (the service
+ * decides what; the role comes from the token, never from the query).
  */
 export const getEstablishmentDetails = asyncHandler(async (req, res) => {
   const establishmentId = req.params.id;
 
   const establishment = await adminService.getEstablishmentForModeration(
     establishmentId,
+    { viewer: isViewer(req.user.role) },
   );
 
   logger.info('Admin fetched establishment details for moderation', {

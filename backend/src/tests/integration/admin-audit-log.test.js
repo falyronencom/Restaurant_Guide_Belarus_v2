@@ -34,12 +34,14 @@ import {
   createAdminAndGetToken,
   createPartnerWithEstablishment,
   createTestReview,
+  createViewerAndGetToken,
 } from '../utils/adminTestHelpers.js';
 
 const BASE_URL = '/api/v1/admin/audit-log';
 
 let adminToken;
 let adminUserId;
+let viewerToken; // read-only panel role: sees the journal without metadata
 let userToken; // non-admin, for 403 tests
 let approvedEstablishmentId;
 let rejectedEstablishmentId;
@@ -50,6 +52,10 @@ beforeAll(async () => {
   const admin = await createAdminAndGetToken();
   adminToken = admin.accessToken;
   adminUserId = admin.user.id;
+
+  // Viewer user
+  const viewer = await createViewerAndGetToken();
+  viewerToken = viewer.accessToken;
 
   // Non-admin user for 403 assertions
   const regularUser = await createUserAndGetTokens({
@@ -237,6 +243,24 @@ describe('GET /api/v1/admin/audit-log — entry schema', () => {
     body.data.forEach(entry => {
       expect(entry).toHaveProperty('ip_address');
       expect(entry).toHaveProperty('user_agent');
+    });
+  });
+
+  test('viewer never receives ip_address / user_agent, even with include_metadata=true', async () => {
+    // The read-only role may be shown to a third party; operator metadata
+    // stays with admins whatever the query asks (SDL CAT-C-2.11).
+    const { body } = await request(app)
+      .get(`${BASE_URL}?include_metadata=true`)
+      .set('Authorization', `Bearer ${viewerToken}`)
+      .expect(200);
+
+    expect(body.data.length).toBeGreaterThan(0);
+    body.data.forEach(entry => {
+      expect(entry).not.toHaveProperty('ip_address');
+      expect(entry).not.toHaveProperty('user_agent');
+      // The rest of the entry is the same journal an admin sees.
+      expect(entry).toHaveProperty('admin_name');
+      expect(entry).toHaveProperty('summary');
     });
   });
 

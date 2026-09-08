@@ -10,6 +10,7 @@
 
 import * as auditLogService from '../services/auditLogService.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { isViewer } from '../config/panelRoles.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -31,6 +32,12 @@ export const listAuditLog = asyncHandler(async (req, res) => {
     include_metadata,
   } = req.query;
 
+  // IP address and user agent are operator metadata. A viewer — the
+  // read-only panel role that may be shown to a third party — never receives
+  // them, whatever the query says (Coordinator decision 2026-09-08,
+  // SDL CAT-C-2.11). The rest of the journal is the same for both roles.
+  const metadataAllowed = !isViewer(req.user.role);
+
   const result = await auditLogService.getAuditLog({
     page,
     perPage,
@@ -40,7 +47,7 @@ export const listAuditLog = asyncHandler(async (req, res) => {
     from,
     to,
     sort,
-    include_metadata: include_metadata === 'true',
+    include_metadata: include_metadata === 'true' && metadataAllowed,
   });
 
   logger.info('Admin fetched audit log', {

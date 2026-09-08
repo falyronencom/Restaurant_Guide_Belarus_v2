@@ -73,9 +73,16 @@ export const getPendingEstablishments = async ({ page = 1, perPage = 20 } = {}) 
  * - Адрес (city, address, coordinates)
  *
  * @param {string} establishmentId - UUID
+ * @param {Object} [options]
+ * @param {boolean} [options.viewer=false] - Caller is the read-only panel
+ *   role: partner contact person, contact e-mail and the registration
+ *   document are redacted (Coordinator decision 2026-09-08, SDL CAT-C-2.11).
  * @returns {Promise<Object>} Complete establishment with media and partner docs
  */
-export const getEstablishmentForModeration = async (establishmentId) => {
+export const getEstablishmentForModeration = async (
+  establishmentId,
+  { viewer = false } = {},
+) => {
   try {
     // Fetch establishment (includeAll=true to see pending status)
     const establishment = await EstablishmentModel.findEstablishmentById(
@@ -96,6 +103,20 @@ export const getEstablishmentForModeration = async (establishmentId) => {
       MediaModel.getEstablishmentMedia(establishmentId),
       PartnerDocumentsModel.findByEstablishmentId(establishmentId),
     ]);
+
+    // Who suspended it. moderation_notes carries the reason and the time but
+    // no author (feedback_moderation_notes_text); the only carrier of
+    // authorship is the audit log. Read it back instead of writing a second
+    // copy into moderation_notes: one source of truth, and it also covers
+    // suspensions made before this field existed. One extra query, only for
+    // the suspended card.
+    const suspension = establishment.status === 'suspended'
+      ? await AuditLogModel.getLatestEntityAction({
+        entityType: 'establishment',
+        entityId: establishmentId,
+        action: 'suspend',
+      })
+      : null;
 
     // Organize media by type
     // preview_url и file_type нужны просмотрщику админки: модератор должен
@@ -144,11 +165,15 @@ export const getEstablishmentForModeration = async (establishmentId) => {
       attributes: establishment.attributes,
 
       // Data tab (legal / partner info)
+      // A viewer gets the company, not the people: contact person, contact
+      // e-mail and the registration document are redacted. The flag lets the
+      // client say "hidden in view mode" instead of showing an empty field.
       legal_name: partnerDoc?.company_name || null,
       unp: partnerDoc?.tax_id || null,
-      registration_doc_url: partnerDoc?.document_url || null,
-      contact_person: partnerDoc?.contact_person || null,
-      contact_email: partnerDoc?.contact_email || null,
+      registration_doc_url: viewer ? null : (partnerDoc?.document_url || null),
+      contact_person: viewer ? null : (partnerDoc?.contact_person || null),
+      contact_email: viewer ? null : (partnerDoc?.contact_email || null),
+      partner_data_redacted: viewer,
 
       // Media tab
       interior_photos: interiorPhotos,
@@ -161,6 +186,15 @@ export const getEstablishmentForModeration = async (establishmentId) => {
         : (establishment.moderation_notes || null),
       moderated_by: establishment.moderated_by,
       moderated_at: establishment.moderated_at,
+      // Author of the current suspension from the audit log; null when the
+      // card is not suspended or the suspension predates the journal.
+      suspended_by: suspension
+        ? {
+          id: suspension.user_id,
+          name: suspension.admin_name,
+          at: suspension.created_at,
+        }
+        : null,
 
       // Timestamps
       created_at: establishment.created_at,

@@ -20,18 +20,25 @@
 import request from 'supertest';
 import app from '../../server.js';
 import { clearAllData, query } from '../utils/database.js';
+import { testUsers } from '../fixtures/users.js';
 import {
   createAdminAndGetToken,
+  createViewerAndGetToken,
   createPartnerWithEstablishment,
   getEstablishmentFromDb,
   checkAuditLogExists,
 } from '../utils/adminTestHelpers.js';
 
 let adminToken;
+let adminUserId;
+let viewerToken;
 
 beforeAll(async () => {
   const admin = await createAdminAndGetToken();
   adminToken = admin.accessToken;
+  adminUserId = admin.user.id;
+  const viewer = await createViewerAndGetToken();
+  viewerToken = viewer.accessToken;
   // Regular user and partner are created per-test via createPartnerWithEstablishment
 });
 
@@ -356,6 +363,102 @@ describe('POST /api/v1/admin/establishments/:id/moderate (#7)', () => {
 
     const auditExists = await checkAuditLogExists(establishment.id, 'moderate_reject');
     expect(auditExists).toBe(true);
+  });
+});
+
+// ============================================================================
+// #6a — GET /api/v1/admin/establishments/:id — author of the suspension
+//       (read back from the audit log) and what a viewer does not see
+// ============================================================================
+
+describe('GET /api/v1/admin/establishments/:id — suspended_by and viewer redaction', () => {
+  test('suspended establishment carries suspended_by taken from the audit log', async () => {
+    const { establishment } = await createPartnerWithEstablishment('active');
+
+    await request(app)
+      .post(`/api/v1/admin/establishments/${establishment.id}/suspend`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'Проверка авторства' })
+      .expect(200);
+
+    const response = await request(app)
+      .get(`/api/v1/admin/establishments/${establishment.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    const data = response.body.data;
+    expect(data.status).toBe('suspended');
+    expect(data.suspended_by).toEqual({
+      id: adminUserId,
+      name: testUsers.admin.name,
+      at: expect.any(String),
+    });
+
+    // The card's own suspended_at (written as toISOString, UTC) and the audit
+    // row's time must sit on the same axis: a naive-timestamp misread would
+    // put them hours apart.
+    const cardTime = Date.parse(data.moderation_notes.suspended_at);
+    const journalTime = Date.parse(data.suspended_by.at);
+    expect(Math.abs(journalTime - cardTime)).toBeLessThan(5000);
+  });
+
+  test('an establishment that is not suspended has suspended_by null', async () => {
+    const { establishment } = await createPartnerWithEstablishment('active');
+
+    const response = await request(app)
+      .get(`/api/v1/admin/establishments/${establishment.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(response.body.data.suspended_by).toBeNull();
+  });
+
+  test('viewer sees the card with partner contacts and document redacted, admin sees them', async () => {
+    const { establishment, partner } = await createPartnerWithEstablishment('pending');
+    await query(
+      `INSERT INTO partner_documents (
+        partner_id, establishment_id, document_type, document_url,
+        company_name, tax_id, contact_person, contact_email
+      ) VALUES ($1, $2, 'registration', $3, $4, $5, $6, $7)`,
+      [
+        partner.user.id,
+        establishment.id,
+        'https://res.cloudinary.com/test/raw/upload/registration.pdf',
+        'ООО «Тестовая кухня»',
+        '190000000',
+        'Иван Контактов',
+        'contact@test.com',
+      ],
+    );
+
+    const asAdmin = await request(app)
+      .get(`/api/v1/admin/establishments/${establishment.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(asAdmin.body.data.partner_data_redacted).toBe(false);
+    expect(asAdmin.body.data.contact_person).toBe('Иван Контактов');
+    expect(asAdmin.body.data.contact_email).toBe('contact@test.com');
+    expect(asAdmin.body.data.registration_doc_url).toBe(
+      'https://res.cloudinary.com/test/raw/upload/registration.pdf',
+    );
+
+    const asViewer = await request(app)
+      .get(`/api/v1/admin/establishments/${establishment.id}`)
+      .set('Authorization', `Bearer ${viewerToken}`)
+      .expect(200);
+
+    const data = asViewer.body.data;
+    expect(data.partner_data_redacted).toBe(true);
+    expect(data.contact_person).toBeNull();
+    expect(data.contact_email).toBeNull();
+    expect(data.registration_doc_url).toBeNull();
+    // The company itself stays visible: it is not personal data.
+    expect(data.legal_name).toBe('ООО «Тестовая кухня»');
+    expect(data.unp).toBe('190000000');
+    // Everything else is the same card.
+    expect(data.name).toBe(establishment.name);
+    expect(data.status).toBe('pending');
   });
 });
 

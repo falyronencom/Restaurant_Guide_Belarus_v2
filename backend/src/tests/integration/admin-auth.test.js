@@ -24,11 +24,12 @@ import app from '../../server.js';
 import { clearAllData } from '../utils/database.js';
 import { createUserAndGetTokens } from '../utils/auth.js';
 import { testUsers } from '../fixtures/users.js';
-import { ADMIN_CREDENTIALS } from '../utils/adminTestHelpers.js';
+import { ADMIN_CREDENTIALS, VIEWER_CREDENTIALS } from '../utils/adminTestHelpers.js';
 
 beforeAll(async () => {
   // Create all roles needed for this file
   await createUserAndGetTokens(testUsers.admin);
+  await createUserAndGetTokens(testUsers.viewer);
   await createUserAndGetTokens(testUsers.regularUser);
   await createUserAndGetTokens(testUsers.partner);
 });
@@ -118,6 +119,38 @@ describe('Admin Auth — Role Gate', () => {
 
     expect(response.body.success).toBe(false);
     expect(response.body.error.code).toBe('ADMIN_ACCESS_REQUIRED');
+  });
+});
+
+// ============================================================================
+// Viewer — the read-only panel role enters through the same door
+// ============================================================================
+
+describe('Admin Auth — Viewer role', () => {
+  test('viewer logs in and receives tokens with role viewer', async () => {
+    const response = await request(app)
+      .post('/api/v1/admin/auth/login')
+      .send(VIEWER_CREDENTIALS)
+      .expect(200);
+
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.user.role).toBe('viewer');
+    expect(response.body.data.accessToken).toBeDefined();
+    expect(response.body.data.refreshToken).toBeDefined();
+  });
+
+  test('viewer token opens a read endpoint of the panel', async () => {
+    const login = await request(app)
+      .post('/api/v1/admin/auth/login')
+      .send(VIEWER_CREDENTIALS)
+      .expect(200);
+
+    const response = await request(app)
+      .get('/api/v1/admin/establishments/pending')
+      .set('Authorization', `Bearer ${login.body.data.accessToken}`)
+      .expect(200);
+
+    expect(response.body.success).toBe(true);
   });
 });
 

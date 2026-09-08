@@ -6,6 +6,15 @@
  * - Moderation workflow (list pending, view details, approve/reject)
  *
  * All admin routes are mounted at /api/v1/admin/*
+ *
+ * Two access tiers (config/panelRoles.js, SDL CAT-C-2.11, 2026-09-08):
+ *   readAccess  — admin + viewer: every GET that only shows data
+ *   writeAccess — admin only: every mutation, plus reads that exist only to
+ *                 serve one (users/search feeds "assign a partner")
+ * The split is checked statically by tests/unit/adminRoutesAccessTiers.test.js:
+ * a route without a tier, or a GET under writeAccess outside the allow-list
+ * kept there, fails the gate. Do not reintroduce a raw authorize call with an
+ * inline role list here — the guard treats that as a third, unnamed tier.
  */
 
 import express from 'express';
@@ -20,8 +29,14 @@ import * as badgesController from '../../controllers/badgesController.js';
 import { validateLogin } from '../../validators/authValidation.js';
 import { createRateLimiter } from '../../middleware/rateLimiter.js';
 import { authenticate, authorize } from '../../middleware/auth.js';
+import { PANEL_READ_ROLES, PANEL_ACTION_ROLES } from '../../config/panelRoles.js';
 
 const router = express.Router();
+
+/** Read tier: admin and viewer. */
+const readAccess = authorize(PANEL_READ_ROLES);
+/** Action tier: admin only. */
+const writeAccess = authorize(PANEL_ACTION_ROLES);
 
 // ============================================================================
 // Authentication (public — no auth required)
@@ -51,7 +66,7 @@ router.post(
 );
 
 // ============================================================================
-// Moderation (protected — requires admin role)
+// Moderation (protected — readAccess for lists and cards, writeAccess for actions)
 // ============================================================================
 
 /**
@@ -63,7 +78,7 @@ router.post(
 router.get(
   '/establishments/pending',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   adminModerationController.listPendingEstablishments,
 );
 
@@ -80,7 +95,7 @@ router.get(
 router.get(
   '/establishments/active',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   adminModerationController.listActiveEstablishments,
 );
 
@@ -93,7 +108,7 @@ router.get(
 router.get(
   '/establishments/rejected',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   adminModerationController.listRejectedEstablishments,
 );
 
@@ -106,7 +121,7 @@ router.get(
 router.get(
   '/establishments/suspended',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   adminModerationController.listSuspendedEstablishments,
 );
 
@@ -119,7 +134,7 @@ router.get(
 router.get(
   '/establishments/search',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   adminModerationController.searchEstablishments,
 );
 
@@ -136,7 +151,7 @@ router.get(
 router.get(
   '/establishments/:id',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   adminModerationController.getEstablishmentDetails,
 );
 
@@ -149,7 +164,7 @@ router.get(
 router.post(
   '/establishments/:id/moderate',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminModerationController.moderateEstablishment,
 );
 
@@ -162,7 +177,7 @@ router.post(
 router.post(
   '/establishments/:id/suspend',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminModerationController.suspendEstablishment,
 );
 
@@ -174,7 +189,7 @@ router.post(
 router.post(
   '/establishments/:id/unsuspend',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminModerationController.unsuspendEstablishment,
 );
 
@@ -187,7 +202,7 @@ router.post(
 router.patch(
   '/establishments/:id/coordinates',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminModerationController.updateCoordinates,
 );
 
@@ -200,7 +215,7 @@ router.patch(
 router.patch(
   '/establishments/:id/slug',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminModerationController.updateSlug,
 );
 
@@ -214,7 +229,7 @@ router.patch(
 router.post(
   '/establishments/:id/claim',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminModerationController.claimEstablishment,
 );
 
@@ -226,11 +241,16 @@ router.post(
  * GET /api/v1/admin/users/search?q=email_or_name
  *
  * Search users by email or name (for claim dialog).
+ *
+ * Action tier on purpose although it is a GET: the search exists only to
+ * serve "assign a partner" and returns e-mails and phones of platform users.
+ * A viewer has no action to serve with it. Listed in the allow-list of
+ * tests/unit/adminRoutesAccessTiers.test.js.
  */
 router.get(
   '/users/search',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminModerationController.searchUsers,
 );
 
@@ -246,7 +266,7 @@ router.get(
 router.post(
   '/users/:id/upgrade-to-partner',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminModerationController.upgradeToPartner,
 );
 
@@ -263,7 +283,7 @@ router.post(
 router.get(
   '/analytics/overview',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   analyticsController.getOverview,
 );
 
@@ -276,7 +296,7 @@ router.get(
 router.get(
   '/analytics/users',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   analyticsController.getUsersAnalytics,
 );
 
@@ -289,7 +309,7 @@ router.get(
 router.get(
   '/analytics/establishments',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   analyticsController.getEstablishmentsAnalytics,
 );
 
@@ -302,7 +322,7 @@ router.get(
 router.get(
   '/analytics/reviews',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   analyticsController.getReviewsAnalytics,
 );
 
@@ -321,7 +341,7 @@ router.get(
 router.get(
   '/reviews',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   adminReviewController.listReviews,
 );
 
@@ -334,7 +354,7 @@ router.get(
 router.post(
   '/reviews/:id/toggle-visibility',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminReviewController.toggleVisibility,
 );
 
@@ -348,7 +368,7 @@ router.post(
 router.post(
   '/reviews/:id/delete',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminReviewController.deleteReview,
 );
 
@@ -365,7 +385,7 @@ router.post(
 router.get(
   '/menu-items/flagged',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   adminMenuItemController.listFlaggedMenuItems,
 );
 
@@ -378,7 +398,7 @@ router.get(
 router.post(
   '/menu-items/:id/hide',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminMenuItemController.hideMenuItem,
 );
 
@@ -390,7 +410,7 @@ router.post(
 router.post(
   '/menu-items/:id/unhide',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminMenuItemController.unhideMenuItem,
 );
 
@@ -403,7 +423,7 @@ router.post(
 router.post(
   '/menu-items/:id/dismiss-flag',
   authenticate,
-  authorize(['admin']),
+  writeAccess,
   adminMenuItemController.dismissMenuItemFlag,
 );
 
@@ -421,7 +441,7 @@ router.post(
 router.get(
   '/audit-log',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   auditLogController.listAuditLog,
 );
 
@@ -439,7 +459,7 @@ router.get(
 router.get(
   '/quality/health',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   qualityHealthController.getHealth,
 );
 
@@ -457,7 +477,7 @@ router.get(
 router.get(
   '/badges',
   authenticate,
-  authorize(['admin']),
+  readAccess,
   badgesController.getBadges,
 );
 
