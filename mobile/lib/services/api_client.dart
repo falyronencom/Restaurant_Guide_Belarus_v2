@@ -4,11 +4,12 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:restaurant_guide_mobile/config/environment.dart';
+import 'package:restaurant_guide_mobile/services/session_events.dart';
 
 /// HTTP API client with authentication and error handling
 /// Built on Dio with custom interceptors for token management
 class ApiClient {
-  late final Dio _dio;
+  final Dio _dio;
   final FlutterSecureStorage _storage;
 
   /// Lock to prevent concurrent token refresh attempts.
@@ -18,25 +19,19 @@ class ApiClient {
   Completer<bool>? _refreshCompleter;
 
   // Singleton pattern
-  static final ApiClient _instance = ApiClient._internal();
+  static final ApiClient _instance = ApiClient.withDio(_defaultDio());
   factory ApiClient() => _instance;
 
-  ApiClient._internal() : _storage = const FlutterSecureStorage() {
-    _dio = Dio(
-      BaseOptions(
-        baseUrl: Environment.apiBaseUrl,
-        connectTimeout: const Duration(seconds: Environment.apiConnectTimeout),
-        receiveTimeout: const Duration(seconds: Environment.apiTimeout),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        // Format arrays as repeated keys: categories=A&categories=B
-        // This matches Express query parser expectations
-        listFormat: ListFormat.multiCompatible,
-      ),
-    );
-
+  /// Собирает клиент поверх готового Dio.
+  ///
+  /// Прод по-прежнему ходит через синглтон `ApiClient()` — поведение не
+  /// изменилось. Конструктор нужен тестам перехватчиков: у класса с одним
+  /// приватным конструктором нет точки входа, чтобы собрать его поверх
+  /// подставного транспорта со своим, а не общим на процесс, замком
+  /// обновления токена.
+  ApiClient.withDio(Dio dio)
+      : _dio = dio,
+        _storage = const FlutterSecureStorage() {
     // Add interceptors
     _dio.interceptors.add(_createRequestInterceptor());
     _dio.interceptors.add(_createResponseInterceptor());
@@ -55,6 +50,23 @@ class ApiClient {
       ));
     }
   }
+
+  /// Транспорт прод-сборки: базовый адрес и таймауты из `Environment`.
+  static Dio _defaultDio() => Dio(
+        BaseOptions(
+          baseUrl: Environment.apiBaseUrl,
+          connectTimeout:
+              const Duration(seconds: Environment.apiConnectTimeout),
+          receiveTimeout: const Duration(seconds: Environment.apiTimeout),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          // Format arrays as repeated keys: categories=A&categories=B
+          // This matches Express query parser expectations
+          listFormat: ListFormat.multiCompatible,
+        ),
+      );
 
   /// Get Dio instance for direct use
   Dio get dio => _dio;
@@ -117,6 +129,23 @@ class ApiClient {
   // Error Interceptor - Handles errors and retries
   // ============================================================================
 
+  /// Пути, чей 401 — отказ в учётных данных, а не истёкшая сессия: вход по
+  /// паролю, вход через Google/Яндекс и само обновление токена.
+  static const List<String> _credentialPaths = <String>[
+    '/api/v1/auth/login',
+    '/api/v1/auth/oauth',
+    '/api/v1/auth/refresh',
+  ];
+
+  /// Метка в `extra`: запрос уже повторён после обновления токена.
+  static const String _retriedAfterRefreshKey = 'retriedAfterRefresh';
+
+  /// Текст отказа, когда обновить сессию больше нечем.
+  static const String sessionExpiredMessage = 'Сеанс истёк. Войдите заново.';
+
+  static bool _isCredentialRequest(RequestOptions options) =>
+      _credentialPaths.any((path) => options.uri.path.endsWith(path));
+
   Interceptor _createErrorInterceptor() {
     return InterceptorsWrapper(
       onError: (error, handler) async {
@@ -124,25 +153,47 @@ class ApiClient {
           debugPrint('[API Error] ${error.requestOptions.path}: ${error.message}');
         }
 
-        // Handle 401 Unauthorized - try to refresh token
-        if (error.response?.statusCode == 401) {
+        // Handle 401 Unauthorized - try to refresh token.
+        //
+        // Кроме двух случаев. Первый — запросы за учётными данными. 401 на
+        // вход значит «пароль не принят»: обновлять по нему нечем и незачем,
+        // а раньше такой 401 уходил в эту же ветку и подменялся текстом про
+        // истёкший сеанс. 401 на само обновление возвращался сюда же и ждал
+        // `_refreshCompleter` — тот самый замок, который держит обновление,
+        // ждущее этот ответ. Взаимная блокировка: первый защищённый запрос
+        // после просроченного refresh-токена (30 дней без запуска) или
+        // отключения аккаунта не завершался никогда, таймауты Dio не
+        // помогали — ответ уже получен. Приложение висело на старте.
+        // Второй — запрос, уже повторённый после успешного обновления: его
+        // 401 — ответ по существу (неверный код подтверждения), а не
+        // просроченный токен; иначе каждый повтор запускал обновление
+        // заново, до потолка попыток на бэкенде. Таким запросам ответ
+        // сервера отдаётся как есть.
+        final alreadyRetried =
+            error.requestOptions.extra[_retriedAfterRefreshKey] == true;
+        if (error.response?.statusCode == 401 &&
+            !_isCredentialRequest(error.requestOptions) &&
+            !alreadyRetried) {
           final refreshed = await _attemptTokenRefresh();
           if (refreshed) {
             // Retry original request with new token
+            error.requestOptions.extra[_retriedAfterRefreshKey] = true;
             try {
               final response = await _retry(error.requestOptions);
               return handler.resolve(response);
             } catch (e) {
-              // Refresh succeeded but retry failed
-              return handler.reject(error);
+              // Обновление удалось, а повтор — нет: наружу уходит отказ
+              // самого повтора (с текстом сервера), а не исходный 401.
+              return handler.reject(e is DioException ? e : error);
             }
           } else {
-            // Refresh failed - clear tokens and return error
-            await clearTokens();
+            // Обновить нечем: токены стёрты и провайдер оповещён в
+            // `_attemptTokenRefresh` — один раз на цикл, сколько бы
+            // запросов ни ждало этого обновления.
             return handler.reject(
               DioException(
                 requestOptions: error.requestOptions,
-                error: 'Сеанс истёк. Войдите заново.',
+                error: sessionExpiredMessage,
                 type: DioExceptionType.badResponse,
               ),
             );
@@ -185,24 +236,41 @@ class ApiClient {
   /// Uses a Completer lock so that concurrent 401 responses share a single
   /// refresh call. Without this, strict single-use token rotation on the
   /// backend detects "reuse" and invalidates ALL user tokens.
+  ///
+  /// Провал обновления обрабатывается здесь же и ровно один раз на цикл:
+  /// токены стираются, `SessionEvents.reportExpired` уходит провайдеру
+  /// авторизации. Ожидающие замка запросы получают только `false`.
   Future<bool> _attemptTokenRefresh() async {
     // If a refresh is already in progress, wait for its result
-    if (_refreshCompleter != null) {
-      return _refreshCompleter!.future;
+    final inFlight = _refreshCompleter;
+    if (inFlight != null) {
+      return inFlight.future;
     }
 
-    _refreshCompleter = Completer<bool>();
+    final completer = Completer<bool>();
+    _refreshCompleter = completer;
 
+    var refreshed = false;
     try {
-      final result = await _doTokenRefresh();
-      _refreshCompleter!.complete(result);
-      return result;
-    } catch (e) {
-      _refreshCompleter!.complete(false);
-      return false;
+      refreshed = await _doTokenRefresh();
+      if (!refreshed) {
+        // Обновить нечем — сессия закончилась. Стереть токены до того, как
+        // проснутся ожидающие: им уже нечего чистить и нечем повторять.
+        await clearTokens();
+      }
     } finally {
       _refreshCompleter = null;
+      completer.complete(refreshed);
     }
+
+    if (!refreshed) {
+      // Хранилище пусто, обновить сессию больше нечем — об этом обязан
+      // узнать провайдер авторизации, иначе он останется «вошедшим» с
+      // пустым хранилищем. Слушатель сам отличает истёкшую сессию от
+      // запроса без входа по своему состоянию.
+      SessionEvents.reportExpired();
+    }
+    return refreshed;
   }
 
   /// Internal refresh logic — called only once per refresh cycle

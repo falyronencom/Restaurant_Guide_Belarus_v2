@@ -26,10 +26,15 @@ import 'package:restaurant_guide_mobile/services/api_client.dart';
 /// возвращает всё на место в `tearDown`. Иначе следующий файл набора получит
 /// чужой транспорт.
 class StubAdapter implements HttpClientAdapter {
-  StubAdapter(this.respond);
+  StubAdapter(this.respond, {this.maxRequests});
 
   /// Ответ строится по запросу — так тест видит, ЧТО именно ушло на провод.
   final ResponseBody Function(RequestOptions options) respond;
+
+  /// Ограничитель, а не ожидание: перехватчик, зациклившийся на «обновить
+  /// и повторить», без него крутил бы транспорт до бесконечности, и тест
+  /// не падал бы, а висел. `null` — без предела.
+  final int? maxRequests;
 
   /// Все запросы по порядку. Проверять `requests.single`, когда запрос обязан
   /// быть ровно один: лишний вызов — это тоже дефект.
@@ -42,6 +47,11 @@ class StubAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     requests.add(options);
+    final limit = maxRequests;
+    if (limit != null && requests.length > limit) {
+      throw StateError('транспорт зациклился: ${requests.length} запросов, '
+          'последний — ${options.uri.path}');
+    }
     return respond(options);
   }
 

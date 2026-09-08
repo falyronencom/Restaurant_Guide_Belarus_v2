@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_mobile/models/user.dart';
 import 'package:restaurant_guide_mobile/services/account_scope.dart';
 import 'package:restaurant_guide_mobile/services/auth_service.dart';
+import 'package:restaurant_guide_mobile/services/session_events.dart';
 
 /// Authentication status enum
 enum AuthenticationStatus {
@@ -41,9 +44,19 @@ class AuthProvider with ChangeNotifier {
   String? _pendingPhone;
   String? _authMethod; // 'email' or 'phone'
 
+  StreamSubscription<void>? _sessionExpiredSubscription;
+
   AuthProvider({AuthService? authService})
       : _authService = authService ?? AuthService() {
+    _sessionExpiredSubscription =
+        SessionEvents.expired.listen((_) => _onSessionExpired());
     _initialize();
+  }
+
+  @override
+  void dispose() {
+    _sessionExpiredSubscription?.cancel();
+    super.dispose();
   }
 
   // ============================================================================
@@ -97,9 +110,16 @@ class AuthProvider with ChangeNotifier {
           _status = AuthenticationStatus.authenticated;
         } catch (e) {
           final errorStr = e.toString();
+          // Транспорт стирает токены, когда обновить сессию нечем
+          // (просроченный refresh-токен, отключённый аккаунт). Пустое
+          // хранилище после отказа надёжнее разбора текста: у
+          // пересобранного DioException в toString() нет кода статуса.
+          final tokensGone = !await _authService.isAuthenticated();
           // Only clear auth data if token is actually invalid (401)
           // Don't clear on rate limit (429) or network errors
-          if (errorStr.contains('401') || errorStr.contains('Unauthorized')) {
+          if (tokensGone ||
+              errorStr.contains('401') ||
+              errorStr.contains('Unauthorized')) {
             _status = AuthenticationStatus.unauthenticated;
             _currentUser = null;
             await _authService.clearAuthData();
@@ -462,6 +482,31 @@ class AuthProvider with ChangeNotifier {
   }
 
   // ============================================================================
+  // Session expiry
+  // ============================================================================
+
+  /// Транспорт не смог обновить токен и очистил хранилище. До этого сигнала
+  /// провайдер оставался «вошедшим» с пустым хранилищем: профиль показывал
+  /// данные, за которыми уже нельзя сходить, а каждое действие отвечало
+  /// «Сеанс истёк». Теперь — «не вошёл», со сброшенными кэшами аккаунта и
+  /// без локальных остатков сессии.
+  ///
+  /// Сигнал приходит и от запроса без входа (refresh-токена нет — обновлять
+  /// нечем), и во время инициализации с мёртвой сессией; в этих состояниях
+  /// менять нечего. Только «вошёл» превращается в «не вошёл».
+  Future<void> _onSessionExpired() async {
+    if (_status != AuthenticationStatus.authenticated) return;
+    _currentUser = null;
+    _status = AuthenticationStatus.unauthenticated;
+    _clearVerificationState();
+    AccountScope.resetAll();
+    _lastAccountId = null;
+    notifyListeners();
+    // Токены уже стёр транспорт; здесь — остаток сессии (user_data).
+    await _authService.clearAuthData();
+  }
+
+  // ============================================================================
   // Profile Management
   // ============================================================================
 
@@ -644,10 +689,14 @@ class AuthProvider with ChangeNotifier {
     }
 
     // Common error patterns
+    // Фразы сервера здесь обязательны: у DioException, пересобранного
+    // транспортом, в toString() нет ни кода статуса, ни кода из тела ответа
+    // (INVALID_CREDENTIALS, INVALID_CODE) — только текст из `error`.
     if (errorStr.contains('401') ||
         errorStr.contains('Unauthorized') ||
         errorStr.contains('Authentication failed') ||
-        errorStr.contains('INVALID_CREDENTIALS')) {
+        errorStr.contains('INVALID_CREDENTIALS') ||
+        errorStr.contains('Invalid email/phone or password')) {
       return 'Неверный email/телефон или пароль';
     }
     if (errorStr.contains('Email already registered') ||
@@ -661,6 +710,7 @@ class AuthProvider with ChangeNotifier {
       return 'Этот номер телефона уже зарегистрирован. Попробуйте войти.';
     }
     if (errorStr.contains('Invalid verification code') ||
+        errorStr.contains('Verification code is incorrect') ||
         errorStr.contains('INVALID_CODE')) {
       return 'Неверный код подтверждения. Проверьте и попробуйте снова.';
     }
