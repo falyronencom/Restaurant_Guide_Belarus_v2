@@ -6,6 +6,17 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:restaurant_guide_admin_web/config/environment.dart';
 import 'package:restaurant_guide_admin_web/services/session_events.dart';
 
+/// Итог попытки обновить токен.
+///
+/// [rejected] — сервер отверг обновление (просроченный или повторно
+/// использованный refresh, отключённый аккаунт): сессия мертва, хранилище
+/// чистится, провайдер уводит на вход. [transient] — обновление не дошло
+/// (сеть, 5xx в окно деплоя Railway): сессия жива, токены остаются, следующий
+/// запрос попробует снова. Смешивать их нельзя: стирание по 502 выбрасывало
+/// бы ещё действующий refresh-токен и уводило оператора на вход посреди
+/// работы (ревью Phase 3.5, 09.09.2026).
+enum _RefreshOutcome { refreshed, rejected, transient }
+
 /// HTTP API client with authentication and error handling
 /// Built on Dio with custom interceptors for token management
 class ApiClient {
@@ -19,7 +30,7 @@ class ApiClient {
   /// пользователя. Без замка четыре запроса дашборда, получив 401 разом
   /// после четырёх часов простоя, запускали бы четыре обновления — первое
   /// проходило, остальные три выжигали сессию. Образец — mobile.
-  Completer<bool>? _refreshCompleter;
+  Completer<_RefreshOutcome>? _refreshCompleter;
 
   // Singleton pattern
   static final ApiClient _instance = ApiClient.withDio(_defaultDio());
@@ -151,8 +162,8 @@ class ApiClient {
         if (error.response?.statusCode == 401 &&
             !_isCredentialRequest(error.requestOptions) &&
             error.requestOptions.extra[_retriedAfterRefresh] != true) {
-          final refreshed = await _attemptTokenRefresh();
-          if (refreshed) {
+          final outcome = await _attemptTokenRefresh();
+          if (outcome == _RefreshOutcome.refreshed) {
             error.requestOptions.extra[_retriedAfterRefresh] = true;
             try {
               final response = await _retry(error.requestOptions);
@@ -164,9 +175,19 @@ class ApiClient {
             } catch (_) {
               return handler.reject(error);
             }
+          } else if (outcome == _RefreshOutcome.transient) {
+            // Обновление не дошло: токены на месте, сессия жива — запросу
+            // временная ошибка, а не «войдите снова».
+            return handler.reject(
+              DioException(
+                requestOptions: error.requestOptions,
+                error: 'Service temporarily unavailable. Please try again.',
+                type: DioExceptionType.badResponse,
+              ),
+            );
           } else {
-            // Хранилище уже очищено владельцем замка, провайдер уведомлён
-            // (OSB-M I5) — здесь только отказ запросу.
+            // Сервер отверг обновление: хранилище уже очищено владельцем
+            // замка, провайдер уведомлён (OSB-M I5) — здесь только отказ.
             return handler.reject(
               DioException(
                 requestOptions: error.requestOptions,
@@ -213,39 +234,46 @@ class ApiClient {
   /// раз на цикл. Ожидающие получают только результат. Запрос обновления
   /// идёт через тот же `Dio`, но его собственный 401 сюда не возвращается:
   /// путь исключён в [_isCredentialRequest], иначе замок ждал бы сам себя.
-  Future<bool> _attemptTokenRefresh() {
+  Future<_RefreshOutcome> _attemptTokenRefresh() {
     final inFlight = _refreshCompleter;
     if (inFlight != null) return inFlight.future;
 
-    final completer = Completer<bool>();
+    final completer = Completer<_RefreshOutcome>();
     _refreshCompleter = completer;
     () async {
-      var refreshed = false;
+      var outcome = _RefreshOutcome.transient;
       try {
-        refreshed = await _doTokenRefresh();
+        outcome = await _doTokenRefresh();
+        if (outcome == _RefreshOutcome.rejected) {
+          await clearTokens();
+          // Хранилище пусто, обновить сессию больше нечем — об этом обязан
+          // узнать провайдер авторизации, иначе он останется «вошедшим»
+          // с пустым хранилищем (OSB-M I5). Слушатель сам отличает
+          // истёкшую сессию от неудачного входа по своему состоянию.
+          SessionEvents.reportExpired();
+        }
       } catch (_) {
-        refreshed = false;
+        // Исключение хранилища или транспорта: сессию не хороним, но и
+        // обновлённой не считаем.
+        outcome = _RefreshOutcome.transient;
+      } finally {
+        // Только в finally: если замок не снять, каждый следующий 401 будет
+        // ждать его вечно — спиннеры без конца и без редиректа на вход
+        // (ревью Phase 3.5, MEDIUM).
+        _refreshCompleter = null;
+        completer.complete(outcome);
       }
-      if (!refreshed) {
-        await clearTokens();
-        // Хранилище пусто, обновить сессию больше нечем — об этом обязан
-        // узнать провайдер авторизации, иначе он останется «вошедшим»
-        // с пустым хранилищем (OSB-M I5). Слушатель сам отличает
-        // истёкшую сессию от неудачного входа по своему состоянию.
-        SessionEvents.reportExpired();
-      }
-      _refreshCompleter = null;
-      completer.complete(refreshed);
     }();
     return completer.future;
   }
 
-  Future<bool> _doTokenRefresh() async {
+  Future<_RefreshOutcome> _doTokenRefresh() async {
+    final refreshToken = await _storage.read(key: 'refresh_token');
+    if (refreshToken == null || refreshToken.isEmpty) {
+      // Нечем обновлять — сессии нет.
+      return _RefreshOutcome.rejected;
+    }
     try {
-      final refreshToken = await _storage.read(key: 'refresh_token');
-      if (refreshToken == null || refreshToken.isEmpty) {
-        return false;
-      }
 
       final response = await _dio.post(
         '/api/v1/auth/refresh',
@@ -270,12 +298,20 @@ class ApiClient {
               value: responseData['refreshToken'] as String,
             );
           }
-          return true;
+          return _RefreshOutcome.refreshed;
         }
       }
-      return false;
-    } catch (e) {
-      return false;
+      // 200 без токенов — контракт нарушен, обновлять дальше нечем.
+      return _RefreshOutcome.rejected;
+    } on DioException catch (e) {
+      // 4xx (кроме 429) — сервер отверг сам токен: просрочен, повторно
+      // использован, аккаунт отключён. Всё остальное — не дошло: сеть, 5xx
+      // окна деплоя, лимит запросов.
+      final status = e.response?.statusCode;
+      if (status != null && status >= 400 && status < 500 && status != 429) {
+        return _RefreshOutcome.rejected;
+      }
+      return _RefreshOutcome.transient;
     }
   }
 

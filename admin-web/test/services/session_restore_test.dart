@@ -74,7 +74,7 @@ void main() {
 
   test('старт с сохранённой сессией просмотрщика принимается тем же путём',
       () async {
-    installSecureStorageStand(initial: {'access_token': 'a1'});
+    final storage = installSecureStorageStand(initial: {'access_token': 'a1'});
     final viewerEnvelope = <String, dynamic>{
       'success': true,
       'data': {
@@ -92,6 +92,7 @@ void main() {
 
     expect(auth.isAuthenticated, isTrue);
     expect(auth.canModerate, isFalse);
+    expect(storage['access_token'], 'a1', reason: 'хранилище просмотрщика цело');
   });
 
   test('старт с сессией чужой роли по-прежнему стирает хранилище', () async {

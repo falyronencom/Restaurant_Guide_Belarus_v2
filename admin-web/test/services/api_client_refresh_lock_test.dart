@@ -112,6 +112,40 @@ void main() {
     expect(expired, 0);
   });
 
+  test('окно деплоя: 5xx на обновлении не стирает сессию и не объявляет её истёкшей',
+      () async {
+    var refreshCalls = 0;
+    final adapter = StubAdapter(
+      (o) {
+        if (o.uri.path == '/api/v1/auth/refresh') {
+          refreshCalls++;
+          return jsonBody({'error': 'bad gateway'}, status: 502);
+        }
+        return jsonBody(
+          rejectedBody('TOKEN_EXPIRED', 'Token expired'),
+          status: 401,
+        );
+      },
+      maxRequests: 12,
+    );
+    final api = stubClient(adapter);
+
+    final error = await api
+        .get('/api/v1/admin/badges')
+        .timeout(const Duration(seconds: 20))
+        .then<Object?>((_) => null, onError: (Object e) => e);
+
+    expect(error, isA<DioException>());
+    expect((error as DioException).error,
+        'Service temporarily unavailable. Please try again.',
+        reason: 'запросу — временная ошибка, а не «войдите снова»');
+    expect(refreshCalls, 4, reason: 'исходное обновление + 3 повтора, не без предела');
+    expect(expired, 0, reason: 'сессия жива — уводить на вход нельзя');
+    expect(storage['refresh_token'], 'r1',
+        reason: 'ещё действующий refresh-токен нельзя выбрасывать по 502');
+    expect(storage['access_token'], 'stale');
+  });
+
   test('мёртвый refresh-токен при двух параллельных 401: одно обновление, один сигнал',
       () async {
     final adapter = StubAdapter((o) => jsonBody(
