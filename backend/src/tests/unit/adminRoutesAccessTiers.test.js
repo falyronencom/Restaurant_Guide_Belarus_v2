@@ -62,6 +62,15 @@ describe('adminRoutes.js access tiers', () => {
     expect(source).not.toMatch(/authorize\(\[/);
   });
 
+  test('no registration form the parser cannot see', () => {
+    // The parser above understands only `router.<verb>(`. A route added as
+    // `router.route('/x').post(...)`, `router.all(...)` or a mounted
+    // sub-router (`router.use('/x', r)`) would carry any tier — or none —
+    // without a single check here going red. Keep the file to the one form
+    // the guard reads. (Phase 3.5 review finding, 2026-09-08.)
+    expect(source).not.toMatch(/router\.(route|use|all)\(/);
+  });
+
   test('public routes carry neither authenticate nor a tier', () => {
     for (const route of routes.filter((r) => PUBLIC_ROUTES.has(r.path))) {
       expect(route.body).not.toMatch(/authenticate/);
