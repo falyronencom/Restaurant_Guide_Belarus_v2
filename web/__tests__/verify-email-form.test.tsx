@@ -5,11 +5,15 @@
  * (from EITHER action). useAuth and the Server Actions are mocked (the actions'
  * own contract lives in auth-verify-email-action.test.ts).
  *
- * Honesty-audit boundary (2026-09-07): the two files do NOT meet. This one types
- * into the field by label and mocks the action; the action test builds its own
- * FormData carrying `code`. The `name` attribute that joins them is asserted by
- * nothing — renaming it (mutation M47; M48/M49 for LoginForm) keeps all 481 tests
- * green while the form stops submitting anything the action reads.
+ * Honesty-audit boundary, CLOSED 2026-09-08. These two files still never meet
+ * directly — this one types into the field by label and mocks the action, the
+ * action test builds its own FormData carrying `code` — and until 2026-09-08
+ * the `name` attribute that joins them was asserted by nothing: renaming it
+ * (pilot mutation M47; M48/M49 for LoginForm) kept all 481 tests green while
+ * the form stopped submitting anything the action reads. The missing third
+ * side now lives in auth-form-field-names.test.tsx, which compares the WHOLE
+ * set of `name` attributes each auth form renders. Read the pair as covered
+ * because THAT file exists, not because these two describe the same field.
  */
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
