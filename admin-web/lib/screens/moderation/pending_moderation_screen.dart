@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:restaurant_guide_admin_web/config/formatters.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
+import 'package:restaurant_guide_admin_web/providers/auth_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/moderation_provider.dart';
 import 'package:restaurant_guide_admin_web/widgets/admin_screen_header.dart';
 import 'package:restaurant_guide_admin_web/widgets/moderation/moderation_detail_panel.dart';
@@ -34,6 +35,11 @@ class _PendingModerationScreenState extends State<PendingModerationScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ModerationProvider>();
+    // Просмотрщик видит очередь и карточки, но не выносит вердиктов: панель
+    // разбора для него в режиме чтения, а прогресс проверки не рисуется —
+    // считать ему нечего. Охрана действий при этом на сервере (403), здесь
+    // только не обещаем того, что не выполнится.
+    final canModerate = context.watch<AuthProvider>().canModerate;
 
     return Column(
       children: [
@@ -43,7 +49,7 @@ class _PendingModerationScreenState extends State<PendingModerationScreen> {
           actions: <Widget>[
             // Прогресс показывается только при выбранной заявке: без неё
             // проверять нечего, и «0 из 14» было бы не состоянием, а шумом.
-            if (provider.selectedId != null)
+            if (canModerate && provider.selectedId != null)
               _FieldProgress(
                 checked: provider.checkedFieldCount,
                 total: provider.totalFieldCount,
@@ -52,11 +58,17 @@ class _PendingModerationScreenState extends State<PendingModerationScreen> {
             const _SortOrderLabel(),
           ],
         ),
-        const Expanded(
+        Expanded(
           child: Row(
             children: [
-              ModerationListPanel(),
-              Expanded(child: ModerationDetailPanel()),
+              const ModerationListPanel(),
+              Expanded(
+                child: ModerationDetailPanel(
+                  mode: canModerate
+                      ? DetailPanelMode.moderation
+                      : DetailPanelMode.readonly,
+                ),
+              ),
             ],
           ),
         ),
@@ -100,12 +112,17 @@ class _FieldProgress extends StatelessWidget {
     required this.fraction,
   });
 
-  static const double minWidth = 190;
+  static const double width = 190;
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: minWidth),
+    // Ширина фиксированная, а не «не меньше»: индикатор стоит в слоте шапки,
+    // то есть внутри Row, который по главной оси даёт неограниченную ширину.
+    // Column со stretch и Spacer в такой ширине не раскладываются вовсе —
+    // под debug-ассертами это «BoxConstraints forces an infinite width»,
+    // вскрытое тестом экрана целиком (viewer_gating_test).
+    return SizedBox(
+      width: width,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/audit_log_entry.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/audit_log_service.dart';
 
 /// State management for the Audit Log viewer screen
@@ -7,7 +8,9 @@ class AuditLogProvider extends ChangeNotifier {
   final AuditLogService _service;
 
   AuditLogProvider({AuditLogService? service})
-      : _service = service ?? AuditLogService();
+      : _service = service ?? AuditLogService() {
+    AccountScope.register(resetAccountScope);
+  }
 
   static const int perPage = 20;
 
@@ -178,6 +181,25 @@ class AuditLogProvider extends ChangeNotifier {
   /// «последняя …». Метка меняется вместе с данными, в [loadEntries].
   void _resetSelection() {
     _expandedEntryId = null;
+  }
+
+  /// Сброс при смене аккаунта: выборка, фильтры, период и раскрытая строка
+  /// принадлежат вошедшему.
+  void resetAccountScope() {
+    _entries = [];
+    _isLoading = false;
+    _error = null;
+    _currentPage = 1;
+    _totalPages = 1;
+    _totalCount = 0;
+    _latestAt = null;
+    _actionFilter = null;
+    _entityTypeFilter = null;
+    _period = defaultPeriod;
+    _customFrom = null;
+    _customTo = null;
+    _expandedEntryId = null;
+    notifyListeners();
   }
 
   String _extractMessage(Object error) {

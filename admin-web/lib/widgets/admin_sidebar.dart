@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:restaurant_guide_admin_web/config/panel_roles.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
 import 'package:restaurant_guide_admin_web/providers/auth_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/badges_provider.dart';
@@ -348,7 +349,9 @@ class _RailFooter extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().currentUser;
     final name = user?.displayName ?? '—';
-    final role = user?.role ?? '';
+    // Роль — словом, а не ключом БД: «Только просмотр» под именем объясняет
+    // просмотрщику, почему в панели нет ни одной кнопки действия.
+    final role = user == null ? '' : panelRoleLabel(user.role);
     final initial = name.isNotEmpty ? name.substring(0, 1).toUpperCase() : '?';
 
     return Container(

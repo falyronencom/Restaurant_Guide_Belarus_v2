@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/quality_health_models.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/quality_health_service.dart';
 
 /// Состояние панели «Здоровье данных» (AI-ops Brick-1, Tier-0, только чтение).
@@ -22,7 +23,19 @@ class QualityHealthProvider with ChangeNotifier {
   int _generation = 0;
 
   QualityHealthProvider({QualityHealthService? service})
-      : _service = service ?? QualityHealthService();
+      : _service = service ?? QualityHealthService() {
+    AccountScope.register(resetAccountScope);
+  }
+
+  /// Сброс при смене аккаунта: снимок перечитается при следующем входе.
+  /// Поколение сдвигается, чтобы летящий ответ был выброшен.
+  void resetAccountScope() {
+    _generation++;
+    _data = null;
+    _isLoading = false;
+    _error = null;
+    notifyListeners();
+  }
 
   QualityHealthData? get data => _data;
   bool get isLoading => _isLoading;

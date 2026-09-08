@@ -460,6 +460,38 @@ void main() {
       expect(labels, contains('moderator'));
     });
 
+    testWidgets('наблюдатели появляются в доле, только когда они есть',
+        (tester) async {
+      // Роль панели «только просмотр» (миграция 034). При нуле кадр не
+      // меняется — проверено соседним тестом канонического порядка; при
+      // первом таком аккаунте роль встаёт после администраторов и с
+      // русской подписью, а не ключом базы.
+      await pumpEstablishments(tester);
+      await tester.tap(find.text('Пользователи'));
+      await tester.pump();
+      service.answerUsers(
+        _users(
+          roles: const <DistributionItem>[
+            DistributionItem(label: 'user', count: 3291),
+            DistributionItem(label: 'partner', count: 174),
+            DistributionItem(label: 'admin', count: 15),
+            DistributionItem(label: 'viewer', count: 2),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final labels = tester
+          .widgetList<ShareLegendChip>(find.byType(ShareLegendChip))
+          .map((chip) => chip.label)
+          .toList();
+
+      expect(
+        labels,
+        <String>['Пользователи', 'Партнёры', 'Администраторы', 'Наблюдатели'],
+      );
+    });
+
     testWidgets('повторы незнакомой роли складываются, а не отбрасываются',
         (tester) async {
       await pumpEstablishments(tester);

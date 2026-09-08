@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/establishment.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/moderation_service.dart';
 
 /// Per-field review state during moderation session
@@ -104,7 +105,30 @@ class ModerationProvider with ChangeNotifier {
   String? _submitError;
 
   ModerationProvider({ModerationService? service})
-      : _service = service ?? ModerationService();
+      : _service = service ?? ModerationService() {
+    AccountScope.register(resetAccountScope);
+  }
+
+  /// Сброс при смене аккаунта. Вердикты по полям — работа модератора, и
+  /// переносить их на следующего вошедшего нельзя так же, как с одной заявки
+  /// на другую. Ответ на летящую загрузку детали выбросится сам: он сверяет
+  /// свой id с `_selectedId`, а тот обнулён.
+  void resetAccountScope() {
+    _establishments = [];
+    _isLoadingList = false;
+    _listError = null;
+    _currentPage = 1;
+    _totalPages = 1;
+    _totalCount = 0;
+    _selectedDetail = null;
+    _isLoadingDetail = false;
+    _detailError = null;
+    _selectedId = null;
+    _fieldReviews = {};
+    _isSubmitting = false;
+    _submitError = null;
+    notifyListeners();
+  }
 
   // ============================================================================
   // Getters

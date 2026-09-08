@@ -142,8 +142,12 @@ class _RolesPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     // Порядок канонический, не пришедший с бэкенда: тот сортирует по убыванию
     // количества, и роли менялись бы местами по мере роста базы партнёров.
+    // Роли кадра стоят всегда; прочие из словаря — только когда в базе есть
+    // хотя бы один такой аккаунт (см. `kUserRolesAlwaysShown`).
     final counts = <String, int>{
-      for (final key in kUserRoles.keys) key: data.roleCount(key),
+      for (final key in kUserRoles.keys)
+        if (kUserRolesAlwaysShown.contains(key) || data.roleCount(key) > 0)
+          key: data.roleCount(key),
     };
     // Незнакомая роль не теряется: без неё сумма долей молча перестала бы
     // быть целым, а «94,6% + 5,0%» выглядит правдоподобно и при пропаже.

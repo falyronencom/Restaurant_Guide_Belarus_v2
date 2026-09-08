@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:restaurant_guide_admin_web/config/environment.dart';
+import 'package:restaurant_guide_admin_web/services/session_events.dart';
 
 /// HTTP API client with authentication and error handling
 /// Built on Dio with custom interceptors for token management
@@ -121,6 +122,11 @@ class ApiClient {
             }
           } else {
             await clearTokens();
+            // Хранилище пусто, обновить сессию больше нечем — об этом обязан
+            // узнать провайдер авторизации, иначе он останется «вошедшим»
+            // с пустым хранилищем (OSB-M I5). Слушатель сам отличает
+            // истёкшую сессию от неудачного входа по своему состоянию.
+            SessionEvents.reportExpired();
             return handler.reject(
               DioException(
                 requestOptions: error.requestOptions,

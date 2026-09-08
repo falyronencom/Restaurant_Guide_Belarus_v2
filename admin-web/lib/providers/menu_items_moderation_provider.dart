@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/flagged_menu_item.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/admin_menu_item_service.dart';
 
 /// Область очереди по признаку скрытости.
@@ -36,7 +37,9 @@ class MenuItemsModerationProvider with ChangeNotifier {
   static const int perPage = 20;
 
   MenuItemsModerationProvider({AdminMenuItemService? service})
-      : _service = service ?? AdminMenuItemService();
+      : _service = service ?? AdminMenuItemService() {
+    AccountScope.register(resetAccountScope);
+  }
 
   List<FlaggedMenuItem> _items = <FlaggedMenuItem>[];
   String? _selectedId;
@@ -129,6 +132,41 @@ class MenuItemsModerationProvider with ChangeNotifier {
 
   bool get isSubmittingAction => _isSubmittingAction;
   String? get actionError => _actionError;
+
+  // ============================================================================
+  // Account scope
+  // ============================================================================
+
+  /// Сброс при смене аккаунта: очередь, выбор, фильтры и снимок окна
+  /// принадлежат вошедшему. Поколение сдвигается, чтобы летящий ответ был
+  /// выброшен; `_hasLoaded` снимается, чтобы следующий вход начался со
+  /// скелетона, а не с утверждения «очередь разобрана».
+  void resetAccountScope() {
+    _requestSeq++;
+    _items = <FlaggedMenuItem>[];
+    _selectedId = null;
+    _isLoading = false;
+    _hasLoaded = false;
+    _error = null;
+    _visibility = MenuItemVisibility.visible;
+    _city = null;
+    _reason = null;
+    _search = '';
+    _page = 1;
+    _loadedPerPage = perPage;
+    _requestedPage = 1;
+    _pages = 1;
+    _loadedTotal = 0;
+    _loadedVisibleCount = null;
+    _loadedHiddenCount = null;
+    _loadedVisibility = MenuItemVisibility.visible;
+    _loadedNarrowed = false;
+    _cities = const <String>[];
+    _reasons = const <String>[];
+    _isSubmittingAction = false;
+    _actionError = null;
+    notifyListeners();
+  }
 
   // ============================================================================
   // Load

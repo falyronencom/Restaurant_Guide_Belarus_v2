@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/widgets/analytics/period_selector.dart';
 
 /// Общее устройство вкладки аналитики: данные, период, ошибка, загрузка.
@@ -13,6 +14,13 @@ import 'package:restaurant_guide_admin_web/widgets/analytics/period_selector.dar
 /// ([loadIfStale]): менять период у трёх вкладок сразу дёшево, а ходить за
 /// данными для двух невидимых — нет.
 abstract class AnalyticsTabProvider<T> with ChangeNotifier {
+  /// Регистрация сброса здесь, в базовом классе: три вкладки отличаются
+  /// только запросом, и забыть сброс в одной из них было бы тем самым
+  /// «пятнадцатым провайдером», о котором предупреждал реестр отложенных.
+  AnalyticsTabProvider() {
+    AccountScope.register(resetAccountScope);
+  }
+
   T? _data;
   bool _isLoading = false;
   String? _error;
@@ -94,6 +102,19 @@ abstract class AnalyticsTabProvider<T> with ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// Сброс при смене аккаунта: данные, период и ошибка принадлежат
+  /// вошедшему. Поколение сдвигается, чтобы летящий ответ был выброшен.
+  void resetAccountScope() {
+    _generation++;
+    _data = null;
+    _isLoading = false;
+    _error = null;
+    _selection = const PeriodSelection(period: '30d');
+    _loadedSelection = null;
+    _inFlightKey = null;
+    notifyListeners();
   }
 
   @protected

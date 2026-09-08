@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/establishment.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/moderation_service.dart';
 
 /// State management for the "Отказанные" (Rejected) screen.
@@ -11,6 +12,10 @@ class RejectedProvider extends ChangeNotifier {
   static const int perPage = 20;
 
   final ModerationService _service = ModerationService();
+
+  RejectedProvider() {
+    AccountScope.register(resetAccountScope);
+  }
 
   // List state
   List<RejectedEstablishmentItem> _rejections = [];
@@ -28,6 +33,23 @@ class RejectedProvider extends ChangeNotifier {
 
   // Currently selected rejection item (for rejection notes)
   RejectedEstablishmentItem? _selectedRejection;
+
+  /// Сброс при смене аккаунта: история и выбранная карточка принадлежат
+  /// вошедшему.
+  void resetAccountScope() {
+    _rejections = [];
+    _isLoadingList = false;
+    _listError = null;
+    _currentPage = 1;
+    _totalPages = 1;
+    _totalCount = 0;
+    _selectedDetail = null;
+    _isLoadingDetail = false;
+    _detailError = null;
+    _selectedId = null;
+    _selectedRejection = null;
+    notifyListeners();
+  }
 
   // Getters
   List<RejectedEstablishmentItem> get rejections => _rejections;

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/analytics_models.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/analytics_service.dart';
 import 'package:restaurant_guide_admin_web/widgets/analytics/period_selector.dart';
 
@@ -26,7 +27,22 @@ class DashboardProvider with ChangeNotifier {
   int _generation = 0;
 
   DashboardProvider({AnalyticsService? service})
-      : _service = service ?? AnalyticsService();
+      : _service = service ?? AnalyticsService() {
+    AccountScope.register(resetAccountScope);
+  }
+
+  /// Сброс при смене аккаунта: сводка, таймлайн и период принадлежат
+  /// вошедшему. Поколение сдвигается, чтобы летящий ответ был выброшен.
+  void resetAccountScope() {
+    _generation++;
+    _overview = null;
+    _registrationTimeline = [];
+    _aggregation = 'day';
+    _isLoading = false;
+    _error = null;
+    _selection = const PeriodSelection(period: '30d');
+    notifyListeners();
+  }
 
   // Getters
   OverviewData? get overview => _overview;

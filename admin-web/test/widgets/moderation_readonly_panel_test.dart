@@ -17,6 +17,8 @@ EstablishmentDetail _detail({
   String status = 'active',
   String? city = 'Минск',
   Map<String, dynamic>? moderationNotes,
+  String? suspendedByName,
+  bool partnerDataRedacted = false,
 }) {
   return EstablishmentDetail(
     id: 'a41f9c02-1234-5678-9abc-def012345678',
@@ -29,7 +31,13 @@ EstablishmentDetail _detail({
     phone: '+375 29 611-24-80',
     unp: '191482073',
     legalName: 'ООО «Кухмістр Плюс»',
+    registrationDocUrl: partnerDataRedacted
+        ? null
+        : 'https://res.cloudinary.com/test/raw/upload/registration.pdf',
+    contactPerson: partnerDataRedacted ? null : 'Иван Контактов',
     moderationNotes: moderationNotes,
+    suspendedByName: suspendedByName,
+    partnerDataRedacted: partnerDataRedacted,
   );
 }
 
@@ -256,6 +264,68 @@ void main() {
         detail: _detail(status: 'suspended'),
       );
       expect(find.text('Причина приостановки'), findsNothing);
+    });
+
+    testWidgets('называет автора, когда журнал его знает', (tester) async {
+      // Автор приходит из `suspended_by` проекции (последняя запись
+      // `suspend` в журнале действий), а не из moderation_notes.
+      await _pumpPanel(
+        tester,
+        mode: DetailPanelMode.suspended,
+        detail: _detail(
+          status: 'suspended',
+          moderationNotes: <String, dynamic>{
+            'suspend_reason': 'Жалобы на санитарное состояние кухни',
+            'suspended_at': '2026-08-07T11:40:00.000Z',
+          },
+          suspendedByName: 'Сергей Админов',
+        ),
+      );
+
+      expect(find.text('Приостановил: Сергей Админов'), findsOneWidget);
+    });
+
+    testWidgets('без автора строки нет — выдуманного имени не будет',
+        (tester) async {
+      await _pumpPanel(
+        tester,
+        mode: DetailPanelMode.suspended,
+        detail: _detail(
+          status: 'suspended',
+          moderationNotes: <String, dynamic>{
+            'suspend_reason': 'Жалобы на санитарное состояние кухни',
+            'suspended_at': '2026-08-07T11:40:00.000Z',
+          },
+        ),
+      );
+
+      expect(find.textContaining('Приостановил:'), findsNothing);
+    });
+  });
+
+  group('Контакты партнёра у просмотрщика', () {
+    testWidgets('скрытое названо словом, а не пустой ячейкой', (tester) async {
+      // Сервер отдал null не потому, что данных нет, а потому, что вошедший
+      // их видеть не должен. Пустая ячейка утверждала бы первое.
+      await _pumpPanel(
+        tester,
+        mode: DetailPanelMode.readonly,
+        detail: _detail(partnerDataRedacted: true),
+      );
+
+      // Вкладка «Данные»: строка «Регистрация».
+      expect(find.text('Скрыто в режиме просмотра'), findsWidgets);
+      expect(find.text('registration.pdf'), findsNothing);
+    });
+
+    testWidgets('администратору ячейки не подменяются', (tester) async {
+      await _pumpPanel(
+        tester,
+        mode: DetailPanelMode.readonly,
+        detail: _detail(),
+      );
+
+      expect(find.text('Скрыто в режиме просмотра'), findsNothing);
     });
   });
 

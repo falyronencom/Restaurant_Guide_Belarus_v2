@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:restaurant_guide_admin_web/config/formatters.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
 import 'package:restaurant_guide_admin_web/models/establishment.dart';
+import 'package:restaurant_guide_admin_web/providers/auth_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/badges_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/suspended_provider.dart';
 import 'package:restaurant_guide_admin_web/widgets/admin_screen_header.dart';
@@ -192,6 +193,12 @@ class _EntityActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Просмотрщику действий не показываем: сервер ответил бы 403, а кнопка,
+    // обещающая то, что не выполнится, читается как поломка.
+    if (!context.watch<AuthProvider>().canModerate) {
+      return const SizedBox.shrink();
+    }
+
     // Счётчики очередей берём ДО асинхронного действия: обращаться к
     // context после await нельзя.
     final badges = context.read<BadgesProvider>();

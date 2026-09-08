@@ -74,9 +74,10 @@ void main() {
       // production_schema.sql), и появление новой роли ТАМ этот тест не
       // заметит. Он ловит другое: молчаливое расширение словаря здесь без
       // сверки с базой.
+      // `viewer` — миграция 034 (роль панели «только просмотр»).
       expect(
         kUserRoles.keys.toList(),
-        <String>['user', 'partner', 'admin'],
+        <String>['user', 'partner', 'admin', 'viewer'],
       );
     });
 
@@ -84,6 +85,7 @@ void main() {
       expect(userRoleLabel('user'), 'Пользователи');
       expect(userRoleLabel('partner'), 'Партнёры');
       expect(userRoleLabel('admin'), 'Администраторы');
+      expect(userRoleLabel('viewer'), 'Наблюдатели');
     });
 
     test('незнакомая роль видна как есть', () {

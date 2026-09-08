@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
 import 'package:restaurant_guide_admin_web/models/flagged_menu_item.dart';
+import 'package:restaurant_guide_admin_web/providers/auth_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/badges_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/menu_items_moderation_provider.dart';
 import 'package:restaurant_guide_admin_web/screens/menu_items/menu_items_moderation_screen.dart';
@@ -13,6 +14,8 @@ import 'package:restaurant_guide_admin_web/widgets/admin_pagination.dart';
 import 'package:restaurant_guide_admin_web/widgets/admin_screen_header.dart';
 import 'package:restaurant_guide_admin_web/widgets/menu_items/flagged_menu_items_list_panel.dart';
 import 'package:restaurant_guide_admin_web/widgets/state/admin_skeleton.dart';
+
+import '../helpers/stub_auth.dart';
 
 /// Экран «Позиции меню» по кадру 03.
 ///
@@ -64,6 +67,8 @@ class _StubBadges extends BadgesProvider {
   @override
   Future<void> load() async {}
 }
+
+// Стаб авторизации общий для стендов: `test/helpers/stub_auth.dart`.
 
 FlaggedMenuItem _item({
   String id = '1',
@@ -125,6 +130,7 @@ Future<MenuItemsModerationProvider> _pump(
   required _FakeService service,
   Size size = const Size(1440, 820),
   MenuItemVisibility visibility = MenuItemVisibility.visible,
+  bool viewer = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -144,6 +150,11 @@ Future<MenuItemsModerationProvider> _pump(
       providers: [
         ChangeNotifierProvider<MenuItemsModerationProvider>.value(value: provider),
         ChangeNotifierProvider<BadgesProvider>(create: (_) => _StubBadges()),
+        // Панель разбора читает роль: просмотрщику действия не рисуются.
+        ChangeNotifierProvider<AuthProvider>(
+          create: (_) =>
+              viewer ? StubAuthProvider.viewer() : StubAuthProvider.admin(),
+        ),
       ],
       child: MaterialApp(
         theme: AppTheme.lightTheme,
@@ -339,6 +350,9 @@ void main() {
           providers: [
             ChangeNotifierProvider<MenuItemsModerationProvider>.value(value: provider),
             ChangeNotifierProvider<BadgesProvider>(create: (_) => _StubBadges()),
+            ChangeNotifierProvider<AuthProvider>(
+              create: (_) => StubAuthProvider.admin(),
+            ),
           ],
           child: MaterialApp(
             theme: AppTheme.lightTheme,
@@ -422,6 +436,21 @@ void main() {
       // обратное, и модератор видел бы две правды сразу.
       expect(find.text('драники'), findsNothing);
       expect(find.text('12 позиций с флагом · показаны нескрытые'), findsOneWidget);
+    });
+
+    testWidgets('роль «только просмотр»: факты видны, действий нет',
+        (tester) async {
+      // Сервер ответил бы просмотрщику 403; кнопка, обещающая то, что не
+      // выполнится, читается как поломка — её нет вовсе.
+      final service = _FakeService();
+      final provider = await _pump(tester, service: service, viewer: true);
+      provider.selectItem('1');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Скрыть позицию'), findsNothing);
+      expect(find.text('Снять флаг'), findsNothing);
+      // Разбор на месте: позиция названа.
+      expect(find.text('Драники з мачанкай'), findsWidgets);
     });
 
     testWidgets('неудача действия объясняется тостом и называет действие',

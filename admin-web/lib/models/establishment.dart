@@ -91,6 +91,17 @@ class EstablishmentDetail {
   // Moderation metadata
   final Map<String, dynamic>? moderationNotes;
 
+  /// Кто приостановил — из журнала действий (`suspended_by`), а не из
+  /// `moderation_notes`: там автора нет по построению. `null` — заведение
+  /// не приостановлено или приостановка старше журнала.
+  final String? suspendedByName;
+  final DateTime? suspendedByAt;
+
+  /// Сервер скрыл контакты партнёра и документ: вошедший — просмотрщик.
+  /// Пустые `contactPerson` / `contactEmail` / `registrationDocUrl` при этом
+  /// значат «скрыто», а не «не заполнено».
+  final bool partnerDataRedacted;
+
   // Timestamps
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -122,11 +133,15 @@ class EstablishmentDetail {
     this.interiorPhotos = const [],
     this.menuMedia = const [],
     this.moderationNotes,
+    this.suspendedByName,
+    this.suspendedByAt,
+    this.partnerDataRedacted = false,
     this.createdAt,
     this.updatedAt,
   });
 
   factory EstablishmentDetail.fromJson(Map<String, dynamic> json) {
+    final suspendedBy = _parseJsonMap(json['suspended_by']);
     return EstablishmentDetail(
       id: json['id'] as String,
       partnerId: json['partner_id'] as String? ?? '',
@@ -154,6 +169,9 @@ class EstablishmentDetail {
       interiorPhotos: _parseMediaList(json['interior_photos']),
       menuMedia: _parseMediaList(json['menu_media']),
       moderationNotes: _parseJsonMap(json['moderation_notes']),
+      suspendedByName: suspendedBy?['name'] as String?,
+      suspendedByAt: _parseDate(suspendedBy?['at']),
+      partnerDataRedacted: json['partner_data_redacted'] == true,
       createdAt: _parseDate(json['created_at']),
       updatedAt: _parseDate(json['updated_at']),
     );

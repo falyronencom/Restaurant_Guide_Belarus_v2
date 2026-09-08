@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/analytics_models.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/analytics_service.dart';
 
 /// Итоги для полосы вкладок: «Заведения 412 · Пользователи 3 480 · Отзывы 1 240».
@@ -19,7 +20,16 @@ class AnalyticsTotalsProvider with ChangeNotifier {
   bool _isLoading = false;
 
   AnalyticsTotalsProvider({AnalyticsService? service})
-      : _service = service ?? AnalyticsService();
+      : _service = service ?? AnalyticsService() {
+    AccountScope.register(resetAccountScope);
+  }
+
+  /// Сброс при смене аккаунта: итоги перечитываются при следующем входе.
+  void resetAccountScope() {
+    _overview = null;
+    _isLoading = false;
+    notifyListeners();
+  }
 
   int? get establishments => _overview?.establishments.total;
   int? get users => _overview?.users.total;

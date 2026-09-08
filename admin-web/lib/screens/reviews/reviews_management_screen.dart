@@ -4,6 +4,7 @@ import 'package:restaurant_guide_admin_web/config/formatters.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
 import 'package:restaurant_guide_admin_web/models/admin_review_item.dart';
 import 'package:restaurant_guide_admin_web/providers/admin_reviews_provider.dart';
+import 'package:restaurant_guide_admin_web/providers/auth_provider.dart';
 import 'package:restaurant_guide_admin_web/widgets/admin_filter_dropdown.dart';
 import 'package:restaurant_guide_admin_web/widgets/admin_column_message.dart';
 import 'package:restaurant_guide_admin_web/widgets/admin_pagination.dart';
@@ -791,6 +792,9 @@ class _DetailPanel extends StatelessWidget {
     }
 
     final state = reviewStateOf(review);
+    // Просмотрщику действий не показываем: сервер ответил бы 403, а кнопка,
+    // обещающая то, что не выполнится, читается как поломка.
+    final canModerate = context.watch<AuthProvider>().canModerate;
 
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -813,8 +817,10 @@ class _DetailPanel extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 18),
-          _Actions(provider: provider, review: review, state: state),
+          if (canModerate) ...<Widget>[
+            const SizedBox(height: 18),
+            _Actions(provider: provider, review: review, state: state),
+          ],
         ],
       ),
     );

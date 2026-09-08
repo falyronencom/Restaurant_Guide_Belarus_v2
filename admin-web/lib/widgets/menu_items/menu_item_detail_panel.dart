@@ -8,6 +8,7 @@ import 'package:restaurant_guide_admin_web/config/formatters.dart';
 import 'package:restaurant_guide_admin_web/config/moderation_vocabulary.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
 import 'package:restaurant_guide_admin_web/models/flagged_menu_item.dart';
+import 'package:restaurant_guide_admin_web/providers/auth_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/badges_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/menu_items_moderation_provider.dart';
 import 'package:restaurant_guide_admin_web/widgets/moderation/status_dot.dart';
@@ -21,6 +22,9 @@ class MenuItemDetailPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = context.watch<MenuItemsModerationProvider>();
     final selected = provider.selected;
+    // Просмотрщику действий не показываем: сервер ответил бы 403, а кнопка,
+    // обещающая то, что не выполнится, читается как поломка.
+    final canModerate = context.watch<AuthProvider>().canModerate;
 
     if (selected == null) return const _NothingSelected();
 
@@ -42,8 +46,10 @@ class MenuItemDetailPanel extends StatelessWidget {
             const SizedBox(height: 20),
             _HiddenNotice(item: selected),
           ],
-          const SizedBox(height: 24),
-          _Actions(provider: provider, item: selected),
+          if (canModerate) ...<Widget>[
+            const SizedBox(height: 24),
+            _Actions(provider: provider, item: selected),
+          ],
         ],
       ),
     );

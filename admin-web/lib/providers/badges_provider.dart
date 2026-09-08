@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/admin_badges.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/badges_service.dart';
 
 /// Счётчики очередей для рейла и дашборда.
@@ -15,7 +16,16 @@ class BadgesProvider with ChangeNotifier {
   bool _isLoading = false;
 
   BadgesProvider({BadgesService? service})
-      : _service = service ?? BadgesService();
+      : _service = service ?? BadgesService() {
+    AccountScope.register(resetAccountScope);
+  }
+
+  /// Сброс при смене аккаунта: счётчики перечитает шелл при следующем входе.
+  void resetAccountScope() {
+    _badges = null;
+    _isLoading = false;
+    notifyListeners();
+  }
 
   AdminBadges? get badges => _badges;
   bool get isLoading => _isLoading;

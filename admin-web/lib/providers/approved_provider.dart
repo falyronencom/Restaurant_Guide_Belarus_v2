@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/establishment.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/moderation_service.dart';
 
 /// State management for the "Одобренные" (Approved) screen.
@@ -15,6 +16,10 @@ class ApprovedProvider extends ChangeNotifier {
   static const int perPage = 20;
 
   final ModerationService _service = ModerationService();
+
+  ApprovedProvider() {
+    AccountScope.register(resetAccountScope);
+  }
 
   // List state
   List<EstablishmentListItem> _establishments = [];
@@ -41,6 +46,28 @@ class ApprovedProvider extends ChangeNotifier {
   // Action state
   bool _isSubmitting = false;
   String? _submitError;
+
+  /// Сброс при смене аккаунта: каталог, поиск, фильтры, выбранная карточка и
+  /// ход действия принадлежат вошедшему.
+  void resetAccountScope() {
+    _establishments = [];
+    _isLoadingList = false;
+    _listError = null;
+    _currentPage = 1;
+    _totalPages = 1;
+    _totalCount = 0;
+    _sort = 'newest';
+    _cityFilter = null;
+    _searchQuery = '';
+    _isSearchMode = false;
+    _selectedDetail = null;
+    _isLoadingDetail = false;
+    _detailError = null;
+    _selectedId = null;
+    _isSubmitting = false;
+    _submitError = null;
+    notifyListeners();
+  }
 
   // Getters
   List<EstablishmentListItem> get establishments => _establishments;

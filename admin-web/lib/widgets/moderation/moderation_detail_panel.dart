@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:restaurant_guide_admin_web/config/formatters.dart';
+import 'package:restaurant_guide_admin_web/config/panel_roles.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
 import 'package:restaurant_guide_admin_web/utils/open_url.dart';
 import 'package:restaurant_guide_admin_web/widgets/media/media_viewer.dart';
@@ -146,7 +147,10 @@ class _ModerationDetailPanelState extends State<ModerationDetailPanel>
           _RejectionNotesBlock(notes: widget.rejectionNotes!),
 
         if (widget.mode == DetailPanelMode.suspended)
-          _SuspensionBlock(notes: detail.moderationNotes),
+          _SuspensionBlock(
+            notes: detail.moderationNotes,
+            authorName: detail.suspendedByName,
+          ),
 
         // Вкладки. Стили не задаются на месте: активная 15/600 тёмно-оранжевым
         // с подчёркиванием 2px и нижняя граница полосы приходят из
@@ -779,18 +783,21 @@ class _RejectionNotesBlock extends StatelessWidget {
 /// состояние, в котором заведение находится сейчас, а не событие поверх
 /// карточки. Отсюда и разница с [_RejectionNotesBlock].
 ///
-/// Имени модератора в подписи нет, хотя макет его рисует: при приостановке в
-/// `moderation_notes` пишутся только причина и время, автор туда не попадает.
-/// Показывать выдуманное имя нельзя — остаётся время.
+/// Имя модератора приходит из журнала действий (`suspended_by` в проекции
+/// карточки), а не из `moderation_notes`: туда при приостановке пишутся
+/// только причина и время. Приостановка старше журнала автора не имеет —
+/// тогда показывается одно время, выдуманного имени не будет.
 class _SuspensionBlock extends StatelessWidget {
   final Map<String, dynamic>? notes;
+  final String? authorName;
 
-  const _SuspensionBlock({required this.notes});
+  const _SuspensionBlock({required this.notes, this.authorName});
 
   @override
   Widget build(BuildContext context) {
     final reason = notes?['suspend_reason']?.toString().trim();
     if (reason == null || reason.isEmpty) return const SizedBox.shrink();
+    final author = authorName?.trim();
 
     // `.toLocal()` обязателен: бэкенд пишет метку через toISOString(), то
     // есть в UTC, и чтение `.day`/`.hour` прямо с неё показало бы время на
@@ -847,6 +854,16 @@ class _SuspensionBlock extends StatelessWidget {
               height: 1.5,
             ),
           ),
+          if (author != null && author.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              'Приостановил: $author',
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppTheme.disclaimerText,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -944,7 +961,10 @@ extension _DataTabReadOnly on _DataTab {
           Definition(label: 'Кухни', value: detail.cuisines.join(', ')),
           Definition(label: 'Ценовой диапазон', value: detail.priceRange),
           Definition(label: 'Телефон', value: detail.phone),
-          Definition(label: 'E-mail', value: detail.email ?? detail.contactEmail),
+          Definition(
+            label: 'E-mail',
+            value: detail.email ?? _partnerField(detail, detail.contactEmail),
+          ),
           Definition(label: 'Сайт', value: detail.website),
           Definition(label: 'УНП', value: detail.unp, mono: true),
           Definition(
@@ -953,15 +973,21 @@ extension _DataTabReadOnly on _DataTab {
           ),
           Definition(
             label: 'Регистрация',
-            child: detail.registrationDocUrl != null &&
+            child: !detail.partnerDataRedacted &&
+                    detail.registrationDocUrl != null &&
                     detail.registrationDocUrl!.isNotEmpty
                 ? _FileLink(detail.registrationDocUrl!)
                 : null,
-            value: detail.registrationDocUrl,
+            value: _partnerField(detail, detail.registrationDocUrl),
           ),
         ],
       );
 }
+
+/// Контакты партнёра и документ: у просмотрщика сервер их не отдаёт, и
+/// ячейка обязана сказать об этом словом, а не пустотой.
+String? _partnerField(EstablishmentDetail detail, String? value) =>
+    detail.partnerDataRedacted ? kRedactedForViewerLabel : value;
 
 class _AboutTab extends StatelessWidget {
   final EstablishmentDetail detail;
@@ -1092,7 +1118,7 @@ extension _AboutTabReadOnly on _AboutTab {
           ),
           Definition(
             label: 'Номер контактного лица',
-            value: detail.contactPerson,
+            value: _partnerField(detail, detail.contactPerson),
           ),
           Definition(label: 'Ценовой диапазон', value: detail.priceRange),
         ],

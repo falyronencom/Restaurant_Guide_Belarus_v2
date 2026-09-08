@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:restaurant_guide_admin_web/models/admin_review_item.dart';
+import 'package:restaurant_guide_admin_web/services/account_scope.dart';
 import 'package:restaurant_guide_admin_web/services/admin_review_service.dart';
 
 /// State management for the Reviews Management screen
@@ -7,7 +8,9 @@ class AdminReviewsProvider extends ChangeNotifier {
   final AdminReviewService _service;
 
   AdminReviewsProvider({AdminReviewService? service})
-      : _service = service ?? AdminReviewService();
+      : _service = service ?? AdminReviewService() {
+    AccountScope.register(resetAccountScope);
+  }
 
   static const int perPage = 20;
 
@@ -265,6 +268,32 @@ class AdminReviewsProvider extends ChangeNotifier {
     _selectedId = null;
     _selectedReview = null;
     loadReviews();
+  }
+
+  /// Сброс при смене аккаунта: список, фильтры, выбор и ход действия
+  /// принадлежат тому, кто вошёл. Поколение сдвигается, чтобы ответ, летящий
+  /// для прежнего аккаунта, не лёг в состояние нового.
+  void resetAccountScope() {
+    _requestSeq++;
+    _reviews = [];
+    _isLoadingList = false;
+    _listError = null;
+    _currentPage = 1;
+    _totalPages = 1;
+    _totalCount = 0;
+    _hiddenCount = 0;
+    _averageRating = null;
+    _statusFilter = null;
+    _ratingFilter = null;
+    _sort = 'newest';
+    _searchQuery = '';
+    _dateFrom = null;
+    _dateTo = null;
+    _selectedReview = null;
+    _selectedId = null;
+    _isSubmitting = false;
+    _submitError = null;
+    notifyListeners();
   }
 
   String _extractMessage(Object error) {

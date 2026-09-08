@@ -4,9 +4,12 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
 import 'package:restaurant_guide_admin_web/models/flagged_menu_item.dart';
+import 'package:restaurant_guide_admin_web/providers/auth_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/badges_provider.dart';
 import 'package:restaurant_guide_admin_web/providers/menu_items_moderation_provider.dart';
 import 'package:restaurant_guide_admin_web/widgets/menu_items/menu_item_detail_panel.dart';
+
+import '../helpers/stub_auth.dart';
 
 // Блок флага проверки: человеческая фраза вместо сырого JSON, а сама запись —
 // под спойлером.
@@ -99,6 +102,10 @@ Future<_StubProvider> _pump(WidgetTester tester, FlaggedMenuItem first) async {
           value: provider,
         ),
         ChangeNotifierProvider<BadgesProvider>(create: (_) => _StubBadges()),
+        // Панель читает роль вошедшего: действия рисуются администратору.
+        ChangeNotifierProvider<AuthProvider>(
+          create: (_) => StubAuthProvider.admin(),
+        ),
       ],
       child: MaterialApp(
         theme: AppTheme.lightTheme,

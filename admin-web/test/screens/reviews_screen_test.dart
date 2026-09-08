@@ -6,12 +6,15 @@ import 'package:provider/provider.dart';
 import 'package:restaurant_guide_admin_web/config/theme.dart';
 import 'package:restaurant_guide_admin_web/models/admin_review_item.dart';
 import 'package:restaurant_guide_admin_web/providers/admin_reviews_provider.dart';
+import 'package:restaurant_guide_admin_web/providers/auth_provider.dart';
 import 'package:restaurant_guide_admin_web/screens/reviews/reviews_management_screen.dart';
 import 'package:restaurant_guide_admin_web/services/admin_review_service.dart';
 import 'package:restaurant_guide_admin_web/widgets/admin_pagination.dart';
 import 'package:restaurant_guide_admin_web/widgets/admin_column_message.dart';
 import 'package:restaurant_guide_admin_web/widgets/state/admin_error_toast.dart';
 import 'package:restaurant_guide_admin_web/widgets/state/admin_skeleton.dart';
+
+import '../helpers/stub_auth.dart';
 
 // «Отзывы» — кадр 07. До этапа 5 у экрана не было ни одного теста.
 //
@@ -85,7 +88,13 @@ AdminReviewItem _review({
 
 void main() {
   /// Окно 1440x820 — размер кадра: колонка 420 плюс панель разбора.
-  Future<_FakeAdminReviewService> pumpScreen(WidgetTester tester) async {
+  ///
+  /// [viewer] — вошёл просмотрщик: экран читает роль из `AuthProvider`,
+  /// поэтому стенд обязан его предоставить.
+  Future<_FakeAdminReviewService> pumpScreen(
+    WidgetTester tester, {
+    bool viewer = false,
+  }) async {
     final fake = _FakeAdminReviewService();
 
     tester.view.physicalSize = const Size(1440, 820);
@@ -93,8 +102,16 @@ void main() {
     addTearDown(tester.view.reset);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<AdminReviewsProvider>(
-        create: (_) => AdminReviewsProvider(service: fake),
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AdminReviewsProvider>(
+            create: (_) => AdminReviewsProvider(service: fake),
+          ),
+          ChangeNotifierProvider<AuthProvider>(
+            create: (_) =>
+                viewer ? StubAuthProvider.viewer() : StubAuthProvider.admin(),
+          ),
+        ],
         child: MaterialApp(
           theme: AppTheme.lightTheme,
           home: const Scaffold(body: ReviewsManagementScreen()),
@@ -327,8 +344,12 @@ void main() {
   });
 
   group('Панель разбора', () {
-    Future<void> open(WidgetTester tester, AdminReviewItem review) async {
-      final fake = await pumpScreen(tester);
+    Future<void> open(
+      WidgetTester tester,
+      AdminReviewItem review, {
+      bool viewer = false,
+    }) async {
+      final fake = await pumpScreen(tester, viewer: viewer);
       await settle(tester, fake, reviews: <AdminReviewItem>[review]);
       await tester.tap(find.text('Марына К.').first);
       await tester.pump();
@@ -439,6 +460,18 @@ void main() {
       expect(find.text('Скрыть отзыв'), findsNothing);
       expect(find.text('Удалить'), findsNothing);
       expect(find.text('Отзыв удалён — вернуть его нельзя'), findsOneWidget);
+    });
+
+    testWidgets('роль «только просмотр»: отзыв читается, действий нет',
+        (tester) async {
+      // Сервер ответил бы просмотрщику 403; кнопка, обещающая то, что не
+      // выполнится, читается как поломка — её нет вовсе.
+      await open(tester, _review(), viewer: true);
+
+      expect(find.text('Скрыть отзыв'), findsNothing);
+      expect(find.text('Удалить'), findsNothing);
+      // Сам разбор на месте: панель озаглавлена заведением.
+      expect(find.text('Кухмістр'), findsWidgets);
     });
 
     testWidgets('диалог скрытия предупреждает о пересчёте оценки',
