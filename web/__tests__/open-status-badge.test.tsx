@@ -5,13 +5,14 @@
  * workaround needed). render() flushes the mount useEffect via act(), so the
  * badge's post-mount state is asserted synchronously.
  *
- * computeOpenStatus is a pure helper. Honesty audit 2026-09-07: it is NOT
- * separately unit-tested — nothing in web/__tests__ asserts its output, and its
- * overnight-rollover branch is executed by no test at all (breaking it leaves
- * all 481 tests green, mutation M45). Do not read the mock below as "covered
- * elsewhere": it narrows THIS file to the island. We mock it so
- * the badge's render branches are deterministic and independent of wall-clock
- * time — the island's own job (map computed status → DOM) is what's under test.
+ * computeOpenStatus is a pure helper, unit-tested in its own file since
+ * 2026-09-08: __tests__/working-hours.test.ts asserts the parser and the
+ * verdict, the overnight-rollover branch included. Until then that branch was
+ * executed by no test at all — honesty audit, pilot mutation M45 broke it and
+ * left all 481 tests green. So the mock below is not a coverage gap: it narrows
+ * THIS file to the island, keeping the badge's render branches deterministic
+ * and independent of wall-clock time — the island's own job (map computed
+ * status → DOM) is what's under test.
  */
 import { render, screen } from '@testing-library/react';
 
