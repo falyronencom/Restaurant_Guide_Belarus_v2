@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:restaurant_guide_mobile/models/auth_response.dart';
 import 'package:restaurant_guide_mobile/models/user.dart';
@@ -31,14 +32,30 @@ class _FakeAuthService implements AuthService {
   Object? loginError;
   Object? verifyCodeError;
   int clearCalls = 0;
+  int currentUserCalls = 0;
+
+  /// Задержка ответа профиля: тест держит проверку сессии открытой и смотрит,
+  /// что второй заход в неё не стартует.
+  Completer<User>? gate;
+
+  /// Задержка ответа хранилища: тест ловит щель между проверкой условий и
+  /// запуском проверки сессии.
+  Completer<bool>? authGate;
 
   static const _user = User(id: 'u-1', email: 'guest@example.com');
 
   @override
-  Future<bool> isAuthenticated() async => storedSession;
+  Future<bool> isAuthenticated() async {
+    final held = authGate;
+    if (held != null) return held.future;
+    return storedSession;
+  }
 
   @override
   Future<User> getCurrentUser() async {
+    currentUserCalls++;
+    final held = gate;
+    if (held != null) return held.future;
     final user = storedUser;
     if (user == null) throw Exception('no session');
     return user;
@@ -111,6 +128,17 @@ void main() {
     addTearDown(auth.dispose);
     await settled(auth);
     return auth;
+  }
+
+  /// Ждёт выполнения условия, прокручивая очередь событий. Обработчик
+  /// жизненного цикла ничего не возвращает — дождаться его работы можно
+  /// только так; предел оборотов заменяет здесь таймаут.
+  Future<void> until(bool Function() done, String what) async {
+    for (var i = 0; i < 50; i++) {
+      if (done()) return;
+      await pumpEventQueue(times: 1);
+    }
+    fail('не дождались: $what');
   }
 
   /// Ошибка в той форме, в какой её отдаёт транспорт: текст сервера в
@@ -279,6 +307,185 @@ void main() {
       expect(auth.currentUser, isNull);
       expect(storage, isEmpty,
           reason: 'токены стёр транспорт, user_data — провайдер');
+    });
+
+    test('обновление не дошло: «вошёл» остаётся, хранилище цело', () async {
+      // Второй тест поверх настоящих `AuthService()` и `ApiClient()` — на
+      // границе, где живёт дефект: провайдер видит только текст ошибки, а
+      // решение «сессия мертва или сервер молчит» принимает транспорт.
+      // Пользователь открыл профиль в окно деплоя Railway: access-токен
+      // просрочен, обновление упирается в 429 лимитера — и до этой правки
+      // транспорт стирал живой refresh-токен, а провайдер уводил на вход.
+      var serverDown = false;
+      installWireStand((options) {
+        if (options.uri.path.endsWith('/auth/refresh')) {
+          return jsonBody({
+            'success': false,
+            'message': 'Rate limit exceeded, please try again later.',
+            'error': {'code': 'RATE_LIMIT_EXCEEDED'},
+          }, status: 429);
+        }
+        if (serverDown) {
+          return jsonBody({
+            'success': false,
+            'message': 'Access token has expired',
+            'error': {'code': 'TOKEN_EXPIRED'},
+          }, status: 401);
+        }
+        return jsonBody({
+          'success': true,
+          'data': {
+            'user': {'id': 'u-1', 'email': 'guest@example.com', 'name': 'Гость'},
+          },
+        });
+      });
+      final storage = installSecureStorageStand({
+        'access_token': 'valid',
+        'refresh_token': 'alive-r',
+      });
+      var expired = 0;
+      SessionEvents.expired.listen((_) => expired++);
+
+      final auth = AuthProvider();
+      addTearDown(auth.dispose);
+      await settled(auth);
+      expect(auth.isAuthenticated, isTrue, reason: 'предусловие: сессия жива');
+
+      serverDown = true;
+      await auth.refreshUser();
+
+      expect(auth.status, AuthenticationStatus.authenticated,
+          reason: 'лимитер на обновлении — не конец сессии');
+      expect(auth.currentUser?.id, 'u-1');
+      expect(storage['access_token'], 'valid');
+      expect(storage['refresh_token'], 'alive-r',
+          reason: 'этот токен на сервере ещё действителен');
+      expect(expired, 0);
+    });
+  });
+
+  group('Возврат приложения на экран', () {
+    // `_initialize` при отказе сети оставляет токены, но переводит провайдера
+    // в «не вошёл» и больше не пробует. Старт без связи — в метро, в
+    // самолёте, в окно деплоя — делал вошедшего пользователя гостем до
+    // перезапуска приложения.
+    test('«не вошёл» с уцелевшим токеном: связь вернулась — вошёл', () async {
+      final service = _FakeAuthService()..storedSession = true;
+      final auth = await provider(service);
+      expect(auth.isAuthenticated, isFalse,
+          reason: 'предусловие: профиль на старте не ответил');
+      expect(service.currentUserCalls, 1);
+
+      service.storedUser = user;
+      auth.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await until(() => auth.isAuthenticated, 'провайдер вернулся в «вошёл»');
+
+      expect(auth.currentUser?.name, 'Гость');
+      expect(service.currentUserCalls, 2);
+    });
+
+    test('«вошёл»: возврат на экран не тревожит сервер', () async {
+      final service = _FakeAuthService()
+        ..storedSession = true
+        ..storedUser = user;
+      final auth = await provider(service);
+      expect(auth.isAuthenticated, isTrue, reason: 'предусловие');
+
+      auth.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      expect(service.currentUserCalls, 1,
+          reason: 'запрос профиля на каждом возврате из фона — трафик на '
+              'ровном месте');
+      expect(auth.status, AuthenticationStatus.authenticated);
+    });
+
+    test('токенов нет: проверять нечем, запроса нет', () async {
+      final service = _FakeAuthService();
+      final auth = await provider(service);
+      expect(service.currentUserCalls, 0, reason: 'предусловие: гость');
+      var notified = 0;
+      auth.addListener(() => notified++);
+
+      auth.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      // Считать запросы профиля здесь мало: `_initialize` и сам проверяет
+      // хранилище, поэтому без остановки на пустом хранилище счётчик остался
+      // бы нулевым, а тест — вечнозелёным. Запущенный `_initialize` выдаёт
+      // себя флагом загрузки: два оповещения на ровном месте.
+      expect(notified, 0, reason: 'проверка обязана остановиться сразу');
+      expect(service.currentUserCalls, 0);
+      expect(auth.status, AuthenticationStatus.unauthenticated);
+    });
+
+    test('возврат во время идущей проверки: второй заход не стартует',
+        () async {
+      final service = _FakeAuthService()
+        ..storedSession = true
+        ..gate = Completer<User>();
+      final auth = AuthProvider(authService: service);
+      addTearDown(auth.dispose);
+      await until(() => service.currentUserCalls == 1, 'проверка началась');
+
+      auth.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      expect(service.currentUserCalls, 1,
+          reason: 'проверка уже идёт — второй запрос лишний');
+      service.gate!.complete(user);
+      await settled(auth);
+      expect(auth.status, AuthenticationStatus.authenticated);
+    });
+
+    test('два возврата подряд: одна проверка, а не две', () async {
+      // Щель между проверкой состояния и запуском: обе проверки успевают
+      // пройти условие, пока первая ждёт чтения хранилища. Закрывает её
+      // замок внутри самой проверки, а не флаг загрузки.
+      final service = _FakeAuthService()..storedSession = true;
+      final auth = await provider(service);
+      expect(auth.isAuthenticated, isFalse, reason: 'предусловие');
+      service.gate = Completer<User>();
+
+      auth.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      auth.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await until(() => service.currentUserCalls == 2, 'проверка началась');
+      await pumpEventQueue();
+
+      expect(service.currentUserCalls, 2,
+          reason: 'одна проверка на старте и одна на возврат: два '
+              'одновременных `_initialize` дали бы третий запрос профиля и '
+              'гонку за состоянием');
+      service.gate!.complete(user);
+      await settled(auth);
+      expect(auth.status, AuthenticationStatus.authenticated);
+    });
+
+    test('вход, завершившийся во время проверки, не сбрасывается', () async {
+      // Условия проверяются до чтения хранилища, а чтение — это await: за
+      // него успевает завершиться вход. Проверка, запущенная поверх него,
+      // при отказе сети сбросила бы только что вошедшего обратно в гостя.
+      final service = _FakeAuthService()..storedSession = true;
+      final auth = await provider(service);
+      expect(auth.isAuthenticated, isFalse, reason: 'предусловие');
+
+      service.authGate = Completer<bool>();
+      auth.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      final ok = await auth.login(
+        emailOrPhone: 'guest@example.com',
+        password: 'ok',
+      );
+      expect(ok, isTrue, reason: 'предусловие: вход прошёл');
+
+      service.authGate!.complete(true);
+      await pumpEventQueue();
+
+      expect(auth.status, AuthenticationStatus.authenticated,
+          reason: 'проверка обязана увидеть вход и уйти ни с чем');
+      expect(service.currentUserCalls, 1,
+          reason: 'второго запроса профиля не было');
     });
   });
 }

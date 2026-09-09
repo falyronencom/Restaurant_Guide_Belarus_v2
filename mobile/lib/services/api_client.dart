@@ -6,6 +6,35 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:restaurant_guide_mobile/config/environment.dart';
 import 'package:restaurant_guide_mobile/services/session_events.dart';
 
+/// Итог попытки обновить токен.
+///
+/// [rejected] — сервер отверг обновление (просроченный или повторно
+/// использованный refresh-токен, отключённый аккаунт) либо обновлять нечем:
+/// сессия мертва, хранилище чистится, провайдер уводит на вход. [transient] —
+/// обновление не дошло: нет связи, таймаут, 429 лимитера, 5xx в окно деплоя
+/// Railway. Сессия за таким отказом жива, токены остаются, следующее действие
+/// пользователя попробует снова. Смешивать их нельзя: стирание по 502
+/// выбрасывало бы ещё действующий refresh-токен и выкидывало пользователя из
+/// аккаунта посреди работы (образец правки — admin-web, `6a632e6`).
+enum _RefreshOutcome { refreshed, rejected, transient }
+
+/// Итог обновления вместе с отказом, который его вызвал.
+///
+/// Отказ нужен только для [_RefreshOutcome.transient]: у обрыва связи и
+/// таймаута уже есть точный русский текст от `_enhanceError` («Нет связи…»,
+/// «Сервер не отвечает…»), и он полезнее общей фразы. Носитель один на цикл —
+/// все запросы, ждавшие одного обновления, получают один и тот же итог.
+class _RefreshResult {
+  const _RefreshResult(this.outcome, {this.failure});
+
+  final _RefreshOutcome outcome;
+  final DioException? failure;
+
+  static const refreshed = _RefreshResult(_RefreshOutcome.refreshed);
+  static const rejected = _RefreshResult(_RefreshOutcome.rejected);
+  static const transient = _RefreshResult(_RefreshOutcome.transient);
+}
+
 /// HTTP API client with authentication and error handling
 /// Built on Dio with custom interceptors for token management
 class ApiClient {
@@ -16,7 +45,7 @@ class ApiClient {
   /// When multiple requests get 401 simultaneously, only the first triggers
   /// a refresh — the rest wait for it. Without this, strict single-use
   /// token rotation detects "reuse" and invalidates ALL user tokens.
-  Completer<bool>? _refreshCompleter;
+  Completer<_RefreshResult>? _refreshCompleter;
 
   // Singleton pattern
   static final ApiClient _instance = ApiClient.withDio(_defaultDio());
@@ -143,6 +172,10 @@ class ApiClient {
   /// Текст отказа, когда обновить сессию больше нечем.
   static const String sessionExpiredMessage = 'Сеанс истёк. Войдите заново.';
 
+  /// Текст отказа, когда обновление не дошло до сервера, но сессия жива.
+  static const String refreshUnavailableMessage =
+      'Сервер временно недоступен. Попробуйте ещё раз.';
+
   static bool _isCredentialRequest(RequestOptions options) =>
       _credentialPaths.any((path) => options.uri.path.endsWith(path));
 
@@ -174,8 +207,8 @@ class ApiClient {
         if (error.response?.statusCode == 401 &&
             !_isCredentialRequest(error.requestOptions) &&
             !alreadyRetried) {
-          final refreshed = await _attemptTokenRefresh();
-          if (refreshed) {
+          final result = await _attemptTokenRefresh();
+          if (result.outcome == _RefreshOutcome.refreshed) {
             // Retry original request with new token
             error.requestOptions.extra[_retriedAfterRefreshKey] = true;
             try {
@@ -186,6 +219,14 @@ class ApiClient {
               // самого повтора (с текстом сервера), а не исходный 401.
               return handler.reject(e is DioException ? e : error);
             }
+          } else if (result.outcome == _RefreshOutcome.transient) {
+            // Обновление не дошло до сервера: токены на месте, сессия жива —
+            // запросу временная ошибка, а не «войдите заново». Повтора здесь
+            // нет намеренно: следующее действие пользователя само получит 401
+            // и попробует обновить снова.
+            return handler.reject(
+              _transientRefreshError(error.requestOptions, result.failure),
+            );
           } else {
             // Обновить нечем: токены стёрты и провайдер оповещён в
             // `_attemptTokenRefresh` — один раз на цикл, сколько бы
@@ -237,50 +278,100 @@ class ApiClient {
   /// refresh call. Without this, strict single-use token rotation on the
   /// backend detects "reuse" and invalidates ALL user tokens.
   ///
-  /// Провал обновления обрабатывается здесь же и ровно один раз на цикл:
-  /// токены стираются, `SessionEvents.reportExpired` уходит провайдеру
-  /// авторизации. Ожидающие замка запросы получают только `false`.
-  Future<bool> _attemptTokenRefresh() async {
+  /// Провал обновления обрабатывается здесь же и ровно один раз на цикл — но
+  /// только настоящий провал. Сессия хоронится (токены стираются,
+  /// `SessionEvents.reportExpired` уходит провайдеру авторизации) лишь при
+  /// [_RefreshOutcome.rejected]. Обновление, не дошедшее до сервера, оставляет
+  /// токены на месте. Ожидающие замка запросы получают тот же итог.
+  Future<_RefreshResult> _attemptTokenRefresh() async {
     // If a refresh is already in progress, wait for its result
     final inFlight = _refreshCompleter;
     if (inFlight != null) {
       return inFlight.future;
     }
 
-    final completer = Completer<bool>();
+    final completer = Completer<_RefreshResult>();
     _refreshCompleter = completer;
 
-    var refreshed = false;
+    var result = _RefreshResult.transient;
     try {
-      refreshed = await _doTokenRefresh();
-      if (!refreshed) {
+      result = await _doTokenRefresh();
+      if (result.outcome == _RefreshOutcome.rejected) {
         // Обновить нечем — сессия закончилась. Стереть токены до того, как
         // проснутся ожидающие: им уже нечего чистить и нечем повторять.
-        await clearTokens();
+        try {
+          await clearTokens();
+        } catch (_) {
+          // Хранилище не отдало стирание. Вердикт сервера от этого не
+          // меняется: токен мёртв, и оставить пользователя «вошедшим» над
+          // мёртвой сессией хуже, чем оставить в хранилище мусор — каждый
+          // следующий 401 гонял бы обновление мёртвым токеном впустую.
+        }
       }
+    } catch (_) {
+      // Исключение ДО ответа сервера — не удалось прочитать хранилище.
+      // Сессию не хороним: отказ Keystore не означает, что refresh-токен
+      // погашен.
+      result = _RefreshResult.transient;
     } finally {
+      // Только в `finally`: не снятый замок заставит КАЖДЫЙ следующий 401
+      // ждать обновление, которое уже не случится, — приложение зависнет без
+      // единого сообщения (тот же класс отказа, что закрыт 08.09).
       _refreshCompleter = null;
-      completer.complete(refreshed);
+      completer.complete(result);
     }
 
-    if (!refreshed) {
+    if (result.outcome == _RefreshOutcome.rejected) {
       // Хранилище пусто, обновить сессию больше нечем — об этом обязан
       // узнать провайдер авторизации, иначе он останется «вошедшим» с
       // пустым хранилищем. Слушатель сам отличает истёкшую сессию от
       // запроса без входа по своему состоянию.
       SessionEvents.reportExpired();
     }
-    return refreshed;
+    return result;
+  }
+
+  /// Отказ исходному запросу, когда обновление не дошло до сервера.
+  ///
+  /// Сеть и таймаут: у отказа нет ответа сервера, а текст уже русский —
+  /// «Нет связи…», «Сервер не отвечает…». Он точнее общей фразы, поэтому
+  /// уходит как есть, вместе с типом.
+  ///
+  /// 429 и 5xx: тело ответа английское (лимитер отвечает «Rate limit
+  /// exceeded…»), и прикладывать `response` нельзя — `booking_provider` и
+  /// `media_service` предпочитают текст из `response.data` тексту `error` и
+  /// показали бы английскую фразу. Тот же запрет уже действует для «Сеанс
+  /// истёк».
+  DioException _transientRefreshError(
+    RequestOptions options,
+    DioException? failure,
+  ) {
+    if (failure != null && failure.response == null) {
+      return DioException(
+        requestOptions: options,
+        error: failure.error,
+        type: failure.type,
+      );
+    }
+    return DioException(
+      requestOptions: options,
+      error: refreshUnavailableMessage,
+      type: DioExceptionType.badResponse,
+    );
   }
 
   /// Internal refresh logic — called only once per refresh cycle
-  Future<bool> _doTokenRefresh() async {
-    try {
-      final refreshToken = await _storage.read(key: 'refresh_token');
-      if (refreshToken == null || refreshToken.isEmpty) {
-        return false;
-      }
+  Future<_RefreshResult> _doTokenRefresh() async {
+    // Чтение хранилища — вне `try`: его отказ не ответ сервера, и хоронить по
+    // нему сессию нельзя. Исключение перехватит владелец замка и объявит итог
+    // временным.
+    final refreshToken = await _storage.read(key: 'refresh_token');
+    if (refreshToken == null || refreshToken.isEmpty) {
+      // Обновлять нечем — сессии нет.
+      return _RefreshResult.rejected;
+    }
 
+    try {
       final response = await _dio.post(
         '/api/v1/auth/refresh',
         data: {'refreshToken': refreshToken},
@@ -305,15 +396,32 @@ class ApiClient {
               value: responseData['refreshToken'] as String,
             );
           }
-          return true;
+          return _RefreshResult.refreshed;
         }
       }
-      return false;
-    } catch (e) {
+      // 200 без токенов — контракт нарушен, обновлять дальше нечем.
+      return _RefreshResult.rejected;
+    } on DioException catch (e) {
       if (Environment.enableApiLogging) {
         debugPrint('[API] Token refresh failed: $e');
       }
-      return false;
+      // 4xx, кроме 429, — сервер отверг сам токен: просрочен (401), повторно
+      // использован (403 TOKEN_REUSE_DETECTED), аккаунт отключён. 429 — это
+      // «слишком часто», а не «токен плох»: сессия за ним жива, и стирать её
+      // по лимитеру нельзя. Всё остальное — обновление не дошло: нет связи,
+      // таймаут, 5xx окна деплоя Railway (их перехватчик уже повторил трижды).
+      final status = e.response?.statusCode;
+      if (status != null && status >= 400 && status < 500 && status != 429) {
+        return _RefreshResult.rejected;
+      }
+      return _RefreshResult(_RefreshOutcome.transient, failure: e);
+    } catch (_) {
+      // Ответ получен, но распорядиться им не удалось: хранилище не приняло
+      // новый токен или тело 200 оказалось не той формы. Старый токен сервер
+      // уже погасил, нового у нас нет — сессии нет. Вывести на вход честнее,
+      // чем навсегда оставить пользователя с мёртвым токеном на «временной»
+      // ошибке.
+      return _RefreshResult.rejected;
     }
   }
 

@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:restaurant_guide_mobile/models/user.dart';
 import 'package:restaurant_guide_mobile/services/account_scope.dart';
 import 'package:restaurant_guide_mobile/services/auth_service.dart';
@@ -23,7 +23,7 @@ enum AuthenticationStatus {
 
 /// Authentication state provider
 /// Manages user authentication status and profile data
-class AuthProvider with ChangeNotifier {
+class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
   final AuthService _authService;
 
   // ============================================================================
@@ -36,6 +36,17 @@ class AuthProvider with ChangeNotifier {
   /// Last account id bound in this app run; guards account-switch resets.
   String? _lastAccountId;
   bool _isLoading = false;
+
+  /// Идёт проверка сохранённой сессии — замок от второго `_initialize`.
+  ///
+  /// Сегодня перекрыт: [_isLoading] поднят на всё время проверки, а щель
+  /// между условиями и запуском закрыта повторной проверкой условий после
+  /// чтения хранилища (см. [_recheckSessionOnResume]). Мутация «замок снят»
+  /// не красит ни одного теста — через публичную поверхность его не
+  /// наблюдать. Оставлен намеренно: [_isLoading] — флаг для экранов, и
+  /// опирать на него живучесть повторного входа значит держать её на
+  /// случайном совпадении.
+  bool _initializing = false;
   String? _errorMessage;
 
   // Registration state
@@ -50,11 +61,13 @@ class AuthProvider with ChangeNotifier {
       : _authService = authService ?? AuthService() {
     _sessionExpiredSubscription =
         SessionEvents.expired.listen((_) => _onSessionExpired());
+    WidgetsBinding.instance.addObserver(this);
     _initialize();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sessionExpiredSubscription?.cancel();
     super.dispose();
   }
@@ -97,6 +110,11 @@ class AuthProvider with ChangeNotifier {
   /// Initialize authentication state
   /// Checks for stored tokens and validates session
   Future<void> _initialize() async {
+    // Замок от второго захода: возврат приложения на экран зовёт проверку
+    // повторно, и два одновременных `_initialize` дали бы два запроса профиля
+    // и гонку за состоянием.
+    if (_initializing) return;
+    _initializing = true;
     _setLoading(true);
 
     try {
@@ -138,7 +156,41 @@ class AuthProvider with ChangeNotifier {
       _setError('Failed to initialize authentication');
       _status = AuthenticationStatus.unauthenticated;
     } finally {
+      _initializing = false;
       _setLoading(false);
+    }
+  }
+
+  /// Возврат приложения на экран — повод проверить сессию ещё раз.
+  ///
+  /// При отказе сети `_initialize` оставляет токены, но переводит провайдера в
+  /// «не вошёл» и больше не пробует. Старт без связи — в метро, в самолёте, в
+  /// окно деплоя бэкенда — делал вошедшего пользователя гостем до перезапуска
+  /// приложения. Возврат на экран — момент, когда связь обычно уже есть.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    _recheckSessionOnResume();
+  }
+
+  Future<void> _recheckSessionOnResume() async {
+    // «Вошёл» не трогаем: перепроверять нечего, а запрос профиля на каждом
+    // возврате из фона — трафик на ровном месте.
+    if (isAuthenticated || _isLoading || _initializing) return;
+    try {
+      // Токенов нет — пользователь и правда гость, а не жертва отказа сети:
+      // проверять нечем.
+      if (!await _authService.isAuthenticated()) return;
+      // Условия перепроверяются ПОСЛЕ чтения хранилища: за это время мог
+      // завершиться вход, и проверка поверх него не нужна — её отказ по сети
+      // сбросил бы только что вошедшего обратно в гостя.
+      if (isAuthenticated || _isLoading || _initializing) return;
+      await _initialize();
+    } catch (_) {
+      // Обработчик жизненного цикла зовёт эту проверку без `await`: любое
+      // исключение отсюда (чтение защищённого хранилища тоже умеет падать)
+      // стало бы необработанной асинхронной ошибкой на каждом возврате
+      // приложения на экран.
     }
   }
 
