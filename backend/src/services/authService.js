@@ -15,6 +15,7 @@
 
 import argon2 from 'argon2';
 import { pool } from '../config/database.js';
+import { resolveRefreshReuseGraceSeconds } from '../config/auth.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt.js';
 import logger from '../utils/logger.js';
 import { randomUUID, randomBytes, createHash } from 'crypto';
@@ -51,6 +52,16 @@ const ARGON2_OPTIONS = {
   timeCost: 3,
   parallelism: 1,
 };
+
+/**
+ * Access token lifetime reported to clients, in seconds.
+ *
+ * Mirrors JWT_ACCESS_EXPIRY ('4h' by default, utils/jwt.js) — the JWT carries
+ * its own exp, this number only tells the client when to come back. Shared by
+ * the two paths that mint an access token (generateTokenPair and a replay
+ * inside the reuse grace window) so they cannot drift apart.
+ */
+const ACCESS_TOKEN_EXPIRES_IN_SECONDS = 14400;
 
 /**
  * Creates a new user account
@@ -276,11 +287,16 @@ export async function generateTokenPair(user) {
     return {
       accessToken,
       refreshToken,
-      expiresIn: 14400, // 4 hours in seconds
+      expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+      // Row id of the refresh token just inserted. refreshAccessToken writes
+      // it into the predecessor's replaced_by so a replay inside the grace
+      // window can find this successor (config/auth.js). Callers that only
+      // hand the pair to a client (login, verify, OAuth) ignore it.
+      refreshTokenId: tokenId,
     };
-    
+
   } catch (error) {
-    logger.error('Failed to generate token pair', { 
+    logger.error('Failed to generate token pair', {
       userId: user.id,
       error: error.message, 
     });
@@ -290,14 +306,16 @@ export async function generateTokenPair(user) {
 
 /**
  * Refreshes an access token using a valid refresh token
- * 
+ *
  * This function implements STRICT TOKEN ROTATION for security:
  * 1. Validates that the refresh token exists and hasn't been used
- * 2. Marks the old token as used immediately
+ * 2. Claims the token atomically, recording its successor in replaced_by
  * 3. Generates a new token pair
  * 4. If an already-used token is presented, this indicates a security breach
- *    and ALL tokens for the user are invalidated
- * 
+ *    and ALL tokens for the user are invalidated — unless the replay lands
+ *    inside the reuse grace window, where the same successor is handed back
+ *    instead (handleReusedToken below; config/auth.js explains the window)
+ *
  * @param {string} refreshToken - The refresh token to exchange
  * @returns {Promise<Object>} New token pair with user info
  * @throws {Error} If token is invalid, expired, or already used
@@ -306,58 +324,45 @@ export async function refreshAccessToken(refreshToken) {
   try {
     // Look up the refresh token in database
     const query = `
-      SELECT rt.id, rt.user_id, rt.token, rt.expires_at, rt.used_at,
+      SELECT rt.id, rt.user_id, rt.token, rt.expires_at, rt.used_at, rt.replaced_by,
              u.id as user_id, u.email, u.phone, u.name, u.role, u.is_active
       FROM refresh_tokens rt
       JOIN users u ON rt.user_id = u.id
       WHERE rt.token = $1
     `;
-    
+
     const result = await pool.query(query, [refreshToken]);
-    
+
     if (result.rows.length === 0) {
       logger.warn('Refresh token not found', { token: `${refreshToken.substring(0, 10)  }...` });
       throw new Error('INVALID_REFRESH_TOKEN');
     }
-    
+
     const tokenData = result.rows[0];
-    
+
     // Check if token has expired
     if (new Date(tokenData.expires_at) < new Date()) {
-      logger.warn('Expired refresh token used', { 
+      logger.warn('Expired refresh token used', {
         userId: tokenData.user_id,
-        tokenId: tokenData.id, 
+        tokenId: tokenData.id,
       });
       throw new Error('REFRESH_TOKEN_EXPIRED');
     }
-    
+
     // CRITICAL SECURITY CHECK: Detect token reuse
-    // If used_at is not null, this token was already used for refresh
-    // This indicates a possible token theft scenario
+    // If used_at is not null, this token was already used for refresh. That is
+    // either a stolen token racing the legitimate one, or the legitimate client
+    // replaying a rotation whose answer it never received — handleReusedToken
+    // separates the two by the grace window.
     if (tokenData.used_at !== null) {
-      logger.error('SECURITY ALERT: Refresh token reuse detected', {
-        userId: tokenData.user_id,
-        tokenId: tokenData.id,
-        originalUseTime: tokenData.used_at,
-      });
-      
-      // Invalidate ALL refresh tokens for this user as security measure
-      await invalidateAllUserTokens(tokenData.user_id);
-      
-      throw new Error('REFRESH_TOKEN_REUSE_DETECTED');
+      return await handleReusedToken(tokenData);
     }
-    
+
     // Check if user account is still active
     if (!tokenData.is_active) {
       throw new Error('USER_ACCOUNT_INACTIVE');
     }
-    
-    // Mark the old token as used (atomic operation)
-    await pool.query(
-      'UPDATE refresh_tokens SET used_at = $1 WHERE id = $2',
-      [new Date(), tokenData.id],
-    );
-    
+
     // Generate new token pair for the user
     const user = {
       id: tokenData.user_id,
@@ -366,23 +371,191 @@ export async function refreshAccessToken(refreshToken) {
       name: tokenData.name,
       role: tokenData.role,
     };
-    
+
+    // The successor is created BEFORE the predecessor is claimed, so that one
+    // statement can both burn the old row and name its replacement. The
+    // reverse order would leave a window where used_at is set and replaced_by
+    // is still null: a replay arriving in that window would find no successor
+    // to hand back and would revoke every session the user has.
     const tokens = await generateTokenPair(user);
-    
-    logger.info('Access token refreshed successfully', { 
+
+    // Atomic claim. `AND used_at IS NULL` is what makes two simultaneous
+    // refreshes of the same token produce exactly one chain — the loser gets
+    // rowCount 0 and takes the replay path instead of forking the chain.
+    // used_at is written by NOW() rather than a JS Date because the column is
+    // `timestamp without time zone` and the grace window is measured in SQL:
+    // mixing the two clocks shifts the comparison by the process offset and
+    // fails silently.
+    const claim = await pool.query(
+      `UPDATE refresh_tokens SET used_at = NOW(), replaced_by = $1
+       WHERE id = $2 AND used_at IS NULL
+       RETURNING id`,
+      [tokens.refreshTokenId, tokenData.id],
+    );
+
+    if (claim.rowCount === 0) {
+      // Lost the race: a concurrent request claimed this token first. Drop the
+      // successor nobody will ever be handed, re-read the row — it now carries
+      // the winner's used_at and replaced_by — and answer it like any other
+      // replay, so the loser gets the winner's successor instead of a 403.
+      await pool.query('DELETE FROM refresh_tokens WHERE id = $1', [tokens.refreshTokenId]);
+
+      const reread = await pool.query(query, [refreshToken]);
+
+      if (reread.rows.length === 0) {
+        throw new Error('INVALID_REFRESH_TOKEN');
+      }
+
+      // concurrentClaim: this request held a token the database called unused
+      // one round trip ago, so it is racing, not replaying something stale.
+      // Before the atomic claim both racers simply rotated and both got 200;
+      // answering one of them with "all your sessions are revoked" would be a
+      // regression introduced by the claim, and it must not depend on whether
+      // the grace window happens to be switched on.
+      return await handleReusedToken(reread.rows[0], { concurrentClaim: true });
+    }
+
+    logger.info('Access token refreshed successfully', {
       userId: user.id,
-      oldTokenId: tokenData.id, 
+      oldTokenId: tokenData.id,
     });
-    
+
+    // Built field by field rather than spread: generateTokenPair also returns
+    // the new row id, which is bookkeeping for the claim above and must not
+    // reach a client. This shape is also exactly what the replay path returns.
     return {
-      ...tokens,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresIn: tokens.expiresIn,
       user,
     };
-    
+
   } catch (error) {
     logger.error('Failed to refresh access token', { error: error.message });
     throw error;
   }
+}
+
+/**
+ * Decides what an already-used refresh token means.
+ *
+ * Strict rotation has a single verdict for a replay — theft — and pays for it
+ * with false alarms: when a rotation's answer is lost, the legitimate client
+ * is left holding a token the database has already burned, and its next
+ * attempt costs the user every session they have (config/auth.js).
+ *
+ * Inside the grace window the replay is answered with THE SAME successor the
+ * first call produced: a new access token, the successor's own refresh token
+ * string, no new row. The chain never branches, so the protection that makes
+ * a second presentation detectable at all is preserved. Outside the window,
+ * or when there is nothing to hand back, the original verdict stands.
+ *
+ * There is nothing to hand back when replaced_by is null — a token burned by
+ * logout, or one rotated before this column was ever written. Reading the
+ * column already in hand keeps those paths, and a disabled window, free of
+ * any extra query.
+ *
+ * @param {Object} tokenData - Refresh-token row joined with its user
+ * @param {Object} [options]
+ * @param {boolean} [options.concurrentClaim=false] - Set by the caller that
+ *   lost the atomic claim. Such a caller read the token as unused a round trip
+ *   ago, so the row's age carries no information about it and the window's
+ *   time bound is skipped — every other check still applies.
+ * @returns {Promise<Object>} Same shape as a normal refresh, when forgiven
+ * @throws {Error} REFRESH_TOKEN_REUSE_DETECTED otherwise
+ */
+async function handleReusedToken(tokenData, { concurrentClaim = false } = {}) {
+  const { seconds: graceSeconds } = resolveRefreshReuseGraceSeconds(process.env);
+
+  // An inactive account is never handed a fresh access token: it falls through
+  // to the verdict below, exactly as it does today — the reuse check has
+  // always run before the is_active check.
+  if ((graceSeconds > 0 || concurrentClaim) && tokenData.replaced_by && tokenData.is_active) {
+    // The window is compared entirely in SQL against the same clock that wrote
+    // used_at. Both columns are `timestamp without time zone`, so a JS Date on
+    // either side of this comparison would silently carry the process offset.
+    //
+    // BETWEEN, not a bare lower bound: used_at is still written by a JS Date on
+    // the logout and revoke paths, and a JS Date reaches a naive column in the
+    // process's local time — under TZ=Europe/Minsk that is three hours in the
+    // future, which a one-sided `>=` would accept forever. Those rows carry no
+    // successor today, so the gate above already excludes them; the upper bound
+    // is what keeps that true if anything ever writes replaced_by elsewhere.
+    //
+    // The $3 escape is for the caller that lost the atomic claim. That caller
+    // read this token as unused moments ago, so its replay is a concurrent
+    // race rather than a stale presentation, and the age of the row says
+    // nothing about it. Without the escape a disabled window would answer a
+    // benign double refresh with "your account is under attack".
+    const replay = await pool.query(
+      `SELECT successor.id, successor.token, successor.used_at, successor.expires_at,
+              EXTRACT(EPOCH FROM (NOW() - burned.used_at)) AS replay_age_seconds
+       FROM refresh_tokens burned
+       JOIN refresh_tokens successor
+         ON successor.id = burned.replaced_by
+        AND successor.user_id = burned.user_id
+       WHERE burned.id = $1
+         AND ($3 OR burned.used_at BETWEEN NOW() - make_interval(secs => $2) AND NOW())`,
+      [tokenData.id, graceSeconds, concurrentClaim],
+    );
+
+    const successor = replay.rows[0];
+
+    // The successor must still be the live end of the chain. Once it has been
+    // used, the client demonstrably received it, and a replay of its
+    // predecessor is no longer explained by a lost answer.
+    if (successor
+      && successor.used_at === null
+      && new Date(successor.expires_at) > new Date()) {
+      const user = {
+        id: tokenData.user_id,
+        email: tokenData.email,
+        phone: tokenData.phone,
+        name: tokenData.name,
+        role: tokenData.role,
+      };
+
+      const accessToken = generateAccessToken({
+        userId: user.id,
+        role: user.role,
+        email: user.email || null,
+      });
+
+      // info, not warn: this is the network behaving as networks do, not an
+      // incident. The event name is what a log search greps for; the token
+      // strings themselves never appear.
+      logger.info('Refresh token replayed within grace window', {
+        event: 'refresh_token_replayed_within_grace',
+        userId: tokenData.user_id,
+        tokenId: tokenData.id,
+        successorTokenId: successor.id,
+        // NUMERIC arrives from node-pg as a string.
+        ageMs: Math.round(Number(successor.replay_age_seconds) * 1000),
+        graceSeconds,
+        // Distinguishes a lost answer from two requests racing each other —
+        // the same log line otherwise, very different causes.
+        concurrentClaim,
+      });
+
+      return {
+        accessToken,
+        refreshToken: successor.token,
+        expiresIn: ACCESS_TOKEN_EXPIRES_IN_SECONDS,
+        user,
+      };
+    }
+  }
+
+  logger.error('SECURITY ALERT: Refresh token reuse detected', {
+    userId: tokenData.user_id,
+    tokenId: tokenData.id,
+    originalUseTime: tokenData.used_at,
+  });
+
+  // Invalidate ALL refresh tokens for this user as security measure
+  await invalidateAllUserTokens(tokenData.user_id);
+
+  throw new Error('REFRESH_TOKEN_REUSE_DETECTED');
 }
 
 /**
@@ -594,7 +767,12 @@ export async function authenticateWithOAuth(providerData) {
       logger.info('OAuth login: existing user', { userId: user.id, provider });
 
       const tokens = await generateTokenPair(user);
-      return { user, ...tokens };
+      return {
+        user,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.expiresIn,
+      };
     }
 
     // 2. Check if email exists in users table
@@ -649,7 +827,12 @@ export async function authenticateWithOAuth(providerData) {
       });
 
       const tokens = await generateTokenPair(linkedUser);
-      return { user: linkedUser, ...tokens };
+      return {
+        user: linkedUser,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.expiresIn,
+      };
     }
 
     // 3. No match → create new user
@@ -683,7 +866,12 @@ export async function authenticateWithOAuth(providerData) {
     });
 
     const tokens = await generateTokenPair(newUser);
-    return { user: newUser, ...tokens };
+    return {
+      user: newUser,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresIn: tokens.expiresIn,
+    };
 
   } catch (error) {
     // Re-throw known error codes

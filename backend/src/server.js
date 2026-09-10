@@ -13,6 +13,7 @@ import { UPLOADS_ROOT } from './middleware/upload.js';
 import * as ocrJobPoller from './services/ocr/ocrJobPoller.js';
 import { JOB_DURATION_BOUND_MS as OCR_JOB_DURATION_BOUND_MS } from './services/ocr/ocrService.js';
 import { resolveShutdownBudget } from './config/shutdown.js';
+import { resolveRefreshReuseGraceSeconds } from './config/auth.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -33,6 +34,13 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const shutdownBudget = resolveShutdownBudget(process.env, {
   jobBoundMs: OCR_JOB_DURATION_BOUND_MS,
 });
+
+/**
+ * Reuse grace window, resolved once for the startup log only. The refresh path
+ * resolves it per call (authService.handleReusedToken) so the value can be
+ * changed without a code path caching it.
+ */
+const refreshReuseGrace = resolveRefreshReuseGraceSeconds(process.env);
 
 /**
  * Trust exactly ONE reverse-proxy hop (Railway's edge terminates TLS and
@@ -224,6 +232,17 @@ const startServer = async () => {
     });
     for (const warning of shutdownBudget.warnings) {
       logger.warn(`Graceful shutdown budget: ${warning}`);
+    }
+
+    // How long a burned refresh token stays redeemable (config/auth.js). Said
+    // once at startup because the value is a security posture, and because a
+    // malformed variable must not be discovered one log line per refresh.
+    logger.info('Refresh reuse grace window resolved', {
+      graceSeconds: refreshReuseGrace.seconds,
+      enabled: refreshReuseGrace.seconds > 0,
+    });
+    if (refreshReuseGrace.warning) {
+      logger.warn(`Refresh reuse grace window: ${refreshReuseGrace.warning}`);
     }
 
     // Test database connection
