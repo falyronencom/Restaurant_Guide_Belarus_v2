@@ -36,17 +36,6 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
   /// Last account id bound in this app run; guards account-switch resets.
   String? _lastAccountId;
   bool _isLoading = false;
-
-  /// Идёт проверка сохранённой сессии — замок от второго `_initialize`.
-  ///
-  /// Сегодня перекрыт: [_isLoading] поднят на всё время проверки, а щель
-  /// между условиями и запуском закрыта повторной проверкой условий после
-  /// чтения хранилища (см. [_recheckSessionOnResume]). Мутация «замок снят»
-  /// не красит ни одного теста — через публичную поверхность его не
-  /// наблюдать. Оставлен намеренно: [_isLoading] — флаг для экранов, и
-  /// опирать на него живучесть повторного входа значит держать её на
-  /// случайном совпадении.
-  bool _initializing = false;
   String? _errorMessage;
 
   // Registration state
@@ -110,11 +99,6 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
   /// Initialize authentication state
   /// Checks for stored tokens and validates session
   Future<void> _initialize() async {
-    // Замок от второго захода: возврат приложения на экран зовёт проверку
-    // повторно, и два одновременных `_initialize` дали бы два запроса профиля
-    // и гонку за состоянием.
-    if (_initializing) return;
-    _initializing = true;
     _setLoading(true);
 
     try {
@@ -156,7 +140,6 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
       _setError('Failed to initialize authentication');
       _status = AuthenticationStatus.unauthenticated;
     } finally {
-      _initializing = false;
       _setLoading(false);
     }
   }
@@ -176,15 +159,18 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
   Future<void> _recheckSessionOnResume() async {
     // «Вошёл» не трогаем: перепроверять нечего, а запрос профиля на каждом
     // возврате из фона — трафик на ровном месте.
-    if (isAuthenticated || _isLoading || _initializing) return;
+    if (isAuthenticated || _isLoading) return;
     try {
       // Токенов нет — пользователь и правда гость, а не жертва отказа сети:
       // проверять нечем.
       if (!await _authService.isAuthenticated()) return;
       // Условия перепроверяются ПОСЛЕ чтения хранилища: за это время мог
-      // завершиться вход, и проверка поверх него не нужна — её отказ по сети
-      // сбросил бы только что вошедшего обратно в гостя.
-      if (isAuthenticated || _isLoading || _initializing) return;
+      // завершиться вход или стартовать другая проверка, а условия выше
+      // проверены до `await`. Без повторной проверки отказ сети сбросил бы
+      // только что вошедшего обратно в гостя, а два возврата подряд дали бы
+      // два запроса профиля: `_initialize` держит [_isLoading] поднятым всё
+      // время работы, и второй заход упирается именно в него.
+      if (isAuthenticated || _isLoading) return;
       await _initialize();
     } catch (_) {
       // Обработчик жизненного цикла зовёт эту проверку без `await`: любое
