@@ -329,11 +329,13 @@ class _SearchHomeScreenState extends State<SearchHomeScreen> {
 
   /// Execute search and navigate to results (existing flow — chevron without text)
   void _executeSearch() {
-    final provider = context.read<EstablishmentsProvider>();
-    provider.setSearchQuery(_searchController.text);
-
-    // Clear previous results and search
-    provider.searchEstablishments();
+    // Только переносим фразу и переходим — запрос делает сам экран результатов
+    // в initState. Свой вызов здесь означал бы два запроса на один переход;
+    // сейчас второй молча глотает защита `if (_isLoading) return`, но она
+    // держится на том, что сеть медленнее кадра. То же правило, что уже
+    // действует в `_onShowAll`. / Carry the phrase and navigate; the results
+    // screen issues the request itself, so one tap means one request.
+    context.read<EstablishmentsProvider>().setSearchQuery(_searchController.text);
 
     // Navigate to results using rootNavigator to navigate outside tab navigator
     Navigator.of(context, rootNavigator: true).pushNamed('/search/results');
