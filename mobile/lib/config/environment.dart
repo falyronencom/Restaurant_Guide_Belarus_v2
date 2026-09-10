@@ -85,8 +85,21 @@ class Environment {
   /// Maximum retry attempts for failed requests
   static const int maxRetryAttempts = 3;
 
-  /// Enable detailed API logging (only in development)
-  static bool get enableApiLogging => isDevelopment;
+  /// Enable detailed API logging.
+  ///
+  /// Развязано с `ENV` намеренно. Переключатель окружения меняет и адрес API:
+  /// `development` уводит на `http://10.0.2.2:3000` — алиас хоста ИЗ ЭМУЛЯТОРА,
+  /// на реальном телефоне он не резолвится. Поэтому включить логи, чтобы
+  /// посмотреть запросы боевой сборки на устройстве, через `ENV` нельзя: вместе
+  /// с логами теряется бэкенд. 09.09.2026 проверка развилки поиска на телефоне
+  /// из-за этого не состоялась — логов не было, а пересобрать под `development`
+  /// значило бы остаться без сервера.
+  ///
+  /// `--dart-define=API_LOG=true` даёт видимость запросов, не трогая адрес. /
+  /// Decoupled from ENV on purpose: ENV also switches the API host, so it
+  /// cannot be used to observe a production build's traffic on a real device.
+  static bool get enableApiLogging =>
+      isDevelopment || const bool.fromEnvironment('API_LOG');
 
   /// Token refresh threshold in minutes
   /// Refresh token when it's about to expire in this many minutes
