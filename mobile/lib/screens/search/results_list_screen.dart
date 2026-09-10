@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -923,14 +925,51 @@ class _ResultsListScreenState extends State<ResultsListScreen> {
     );
   }
 
+  /// Слот для состояний экрана — ошибки и пустой выдачи.
+  ///
+  /// Даёт содержимому податливость по высоте. `Expanded` выше отдаёт
+  /// ОГРАНИЧЕННУЮ коробку — остаток экрана, — а `Scaffold` при открытой
+  /// клавиатуре этот остаток ужимает. Колонка с иконкой, двумя текстами и
+  /// кнопкой в него не влезала: 10.09.2026 при отказе сети с открытой
+  /// клавиатурой низ обрезало на 24 пикселя вместе с кнопкой «Повторить» —
+  /// единственным действием на этом экране. Жёлтая полоса переполнения видна
+  /// только в debug, обрез остаётся и в release.
+  ///
+  /// Слот общий на оба состояния намеренно. Соседнее «Ничего не найдено» тогда
+  /// ещё помещалось — оно короче на кнопку с отступом, — то есть дело было не в
+  /// границе, а в ЗАПАСЕ: на более высокой клавиатуре, при увеличенном
+  /// системном шрифте или в альбомной ориентации черту переходят оба. Добавить
+  /// запаса значило бы отложить тот же отказ.
+  ///
+  /// Влезает — содержимое по центру, как прежде; не влезает — прокручивается,
+  /// и кнопка достижима всегда. / A bounded slot whose content must stay
+  /// reachable when the keyboard shrinks it.
+  Widget _buildStateSlot(List<Widget> children) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Отступы съедают высоту, поэтому вычитаем их из нижней границы:
+        // иначе содержимое всегда было бы выше коробки на два отступа.
+        final minHeight = math.max(
+          0.0,
+          constraints.maxHeight - AppDimensions.paddingL * 2,
+        );
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(AppDimensions.paddingL),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: minHeight),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: children,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   /// Build error state widget
   Widget _buildErrorState(ThemeData theme, EstablishmentsProvider provider) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AppDimensions.paddingL),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+    return _buildStateSlot([
             Icon(
               Icons.error_outline,
               size: 64,
@@ -950,25 +989,17 @@ class _ResultsListScreenState extends State<ResultsListScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppDimensions.spacingL),
-            FilledButton.icon(
-              onPressed: () => provider.refresh(),
-              icon: const Icon(Icons.refresh),
-              label: const Text('Повторить'),
-            ),
-          ],
-        ),
+      FilledButton.icon(
+        onPressed: () => provider.refresh(),
+        icon: const Icon(Icons.refresh),
+        label: const Text('Повторить'),
       ),
-    );
+    ]);
   }
 
   /// Build empty state widget
   Widget _buildEmptyState(ThemeData theme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AppDimensions.paddingL),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+    return _buildStateSlot([
             Icon(
               Icons.search_off,
               size: 64,
@@ -985,12 +1016,9 @@ class _ResultsListScreenState extends State<ResultsListScreen> {
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.secondary,
               ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
+        textAlign: TextAlign.center,
       ),
-    );
+    ]);
   }
 }
 
