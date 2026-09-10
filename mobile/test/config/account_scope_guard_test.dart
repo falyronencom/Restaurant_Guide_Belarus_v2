@@ -12,6 +12,8 @@ import 'package:restaurant_guide_mobile/providers/promotion_provider.dart';
 import 'package:restaurant_guide_mobile/providers/smart_search_provider.dart';
 import 'package:restaurant_guide_mobile/services/account_scope.dart';
 
+import '../support/wire_stand.dart';
+
 /// Сторож реестра сбросов при смене аккаунта.
 ///
 /// **Почему у сквозной проверки должен быть свой сторож.** `AccountScope` —
@@ -116,7 +118,27 @@ void main() {
   });
 
   group('Реестр наполняется на самом деле, а не по тексту', () {
-    setUp(AccountScope.debugReset);
+    setUp(() {
+      AccountScope.debugReset();
+      // Стенд провода здесь не ради проверок — ради тишины на канале платформы.
+      // Проверка сброса ниже дёргает `toggleFavorite`, а это ОПТИМИСТИЧНОЕ
+      // обновление: состояние меняется сразу, но следом уходит сетевой запрос,
+      // и `ApiClient` на каждом запросе читает токен из защищённого хранилища.
+      // В этом файле нет ни биндинга, ни моков — запрос падал на
+      // «Binding has not yet been initialized», и падал АСИНХРОННО, уже за
+      // пределами теста. Успеет он дойти до перехватчика раньше конца файла
+      // или нет — решала нагрузка: под `flutter test` с параллельными файлами
+      // прогон краснел примерно в половине случаев, последовательный всегда
+      // был зелёным. Утверждения теста от этого не зависели вовсе — он падал
+      // не на них. `installWireStand` поднимает биндинг, глушит хранилище и
+      // подменяет транспорт, так что запрос никуда не уходит. / The stand is
+      // here for silence on the platform channel, not for assertions: the
+      // optimistic favourite fires a real request whose async failure landed
+      // outside the test and reddened roughly half of parallel runs.
+      installWireStand(
+        (_) => jsonBody(<String, dynamic>{'success': true, 'data': {}}),
+      );
+    });
     tearDown(AccountScope.debugReset);
 
     test('конструктор каждого обязанного провайдера добавляет ровно один сброс',
